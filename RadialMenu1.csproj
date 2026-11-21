@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <Version>1.2.2</Version>
-    <UpdateRepository Condition="'$(UpdateRepository)' == ''">ilhomwwe-creator/RadialMenu</UpdateRepository>
+    <UpdateRepository Condition="'$(UpdateRepository)' == ''">applimenu/RadialMenu</UpdateRepository>
     <DefaultItemExcludes>$(DefaultItemExcludes);relay/**</DefaultItemExcludes>
   </PropertyGroup>
 

@@ -4,7 +4,7 @@
   <p><strong>Your favorite apps, one mouse gesture away</strong></p>
   <p>Open the wheel right where your cursor is and pick a slice. Set up separate wheels for work, games, and everyday shortcuts, with each app in a direction you can remember.</p>
   <p><a href="README.md">Русский</a> · <strong>English</strong></p>
-  <a href="https://github.com/ilhomwwe-creator/RadialMenu/releases/latest"><img src="docs/media/download-en.png" width="218" alt="Download RadialMenu for Windows x64"></a>
+  <a href="https://github.com/applimenu/RadialMenu/releases/latest"><img src="docs/media/download-en.png" width="218" alt="Download RadialMenu for Windows x64"></a>
 </div>
 
 ## See RadialMenu in action
@@ -20,7 +20,7 @@
 
 ## Install
 
-1. Open the [latest release](https://github.com/ilhomwwe-creator/RadialMenu/releases/latest) and download `RadialMenu-Setup-win-x64.exe` under **Assets**.
+1. Open the [latest release](https://github.com/applimenu/RadialMenu/releases/latest) and download `RadialMenu-Setup-win-x64.exe` under **Assets**.
 2. Run the installer, then open RadialMenu from the Start menu. The installer includes the .NET runtime.
 3. Press **Ctrl + Alt + Q** to open the wheel. Select **Settings («Настройки»)** in the center.
 

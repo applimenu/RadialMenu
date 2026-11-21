@@ -4,7 +4,7 @@
   <p><strong>Любимые приложения в одном движении мыши</strong></p>
   <p>Вызовите колесо там, где сейчас курсор, и выберите нужный сектор. Соберите отдельные колёса для работы, игр и повседневных задач и разложите значки по знакомым направлениям.</p>
   <p><strong>Русский</strong> · <a href="README.en.md">English</a></p>
-  <a href="https://github.com/ilhomwwe-creator/RadialMenu/releases/latest"><img src="docs/media/download-ru.png" width="218" alt="Скачать RadialMenu для Windows x64"></a>
+  <a href="https://github.com/applimenu/RadialMenu/releases/latest"><img src="docs/media/download-ru.png" width="218" alt="Скачать RadialMenu для Windows x64"></a>
 </div>
 
 ## Как выглядит RadialMenu
@@ -20,7 +20,7 @@
 
 ## Установка
 
-1. Откройте [последний релиз](https://github.com/ilhomwwe-creator/RadialMenu/releases/latest) и скачайте `RadialMenu-Setup-win-x64.exe` из раздела **Assets**.
+1. Откройте [последний релиз](https://github.com/applimenu/RadialMenu/releases/latest) и скачайте `RadialMenu-Setup-win-x64.exe` из раздела **Assets**.
 2. Запустите установщик, затем откройте RadialMenu из меню «Пуск». Среда .NET уже входит в установщик.
 3. Нажмите **Ctrl + Alt + Q**, чтобы вызвать колесо. Кнопка **«Настройки»** находится в его центре.
 
