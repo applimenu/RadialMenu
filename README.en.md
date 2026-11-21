@@ -20,6 +20,8 @@
 
 ## Install
 
+> If you already have version 1.2.2 or earlier, download and run the new installer once. Your settings will be preserved. Future updates are available in **Settings → Application**.
+
 1. Open the [latest release](https://github.com/applimenu/RadialMenu/releases/latest) and download `RadialMenu-Setup-win-x64.exe` under **Assets**.
 2. Run the installer, then open RadialMenu from the Start menu. The installer includes the .NET runtime.
 3. Press **Ctrl + Alt + Q** to open the wheel. Select **Settings («Настройки»)** in the center.

@@ -14,19 +14,25 @@ internal static class ReleaseUpdater
 {
     internal sealed record Release(Version Version, Uri Installer, string Sha256, long Size);
     private const long MaxInstallerSize = 512 * 1024 * 1024;
+    private const string RepositoryNamePattern = @"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+";
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
     private static readonly Assembly AppAssembly = typeof(ReleaseUpdater).Assembly;
 
     public static Version CurrentVersion { get; } = AppAssembly.GetName().Version ?? new Version(1, 0, 0);
     public static string DisplayVersion => CurrentVersion.ToString(CurrentVersion.Revision > 0 ? 4 : 3);
-    private static string Repository { get; } = AppAssembly.GetCustomAttributes<AssemblyMetadataAttribute>()
-        .FirstOrDefault(item => item.Key == "RadialMenuUpdateRepository")?.Value ?? "";
+    private static string Repository { get; } = ReadMetadata("RadialMenuUpdateRepository");
+    private static string RepositoryId { get; } = ReadMetadata("RadialMenuUpdateRepositoryId");
+
+    private static string ReadMetadata(string key) => AppAssembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+        .FirstOrDefault(item => item.Key == key)?.Value ?? "";
 
     public static async Task<Release?> CheckAsync(CancellationToken cancellation)
     {
-        if (!Regex.IsMatch(Repository, @"\A[A-Za-z0-9-]+/[A-Za-z0-9_.-]+\z"))
+        bool useRepositoryId = Regex.IsMatch(RepositoryId, @"\A[1-9][0-9]*\z");
+        if (!useRepositoryId && !Regex.IsMatch(Repository, $@"\A{RepositoryNamePattern}\z"))
             throw new InvalidOperationException("В сборке ещё не указан репозиторий обновлений RadialMenu.");
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{Repository}/releases/latest");
+        string endpoint = useRepositoryId ? $"repositories/{RepositoryId}" : $"repos/{Repository}";
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/{endpoint}/releases/latest");
         request.Headers.UserAgent.ParseAdd("RadialMenu/" + DisplayVersion);
         request.Headers.Accept.ParseAdd("application/vnd.github+json");
         using var response = await Http.SendAsync(request, cancellation).ConfigureAwait(false);
@@ -35,7 +41,20 @@ internal static class ReleaseUpdater
         response.EnsureSuccessStatusCode();
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellation).ConfigureAwait(false));
         string architecture = RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant();
-        return ReadLatest(json.RootElement, Repository, architecture, CurrentVersion);
+        string releaseRepository = useRepositoryId ? ReadReleaseRepository(json.RootElement) : Repository;
+        return ReadLatest(json.RootElement, releaseRepository, architecture, CurrentVersion);
+    }
+
+    private static string ReadReleaseRepository(JsonElement release)
+    {
+        // The API response from the permanent repository ID supplies its current owner and name.
+        string? url = release.TryGetProperty("url", out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+        var match = Regex.Match(url ?? "", $@"\Ahttps://api\.github\.com/repos/(?<repo>{RepositoryNamePattern})/releases/[0-9]+\z");
+        if (!match.Success)
+            throw new InvalidOperationException("GitHub вернул неизвестный адрес репозитория обновлений.");
+        return match.Groups["repo"].Value;
     }
 
     internal static Release? ReadLatest(JsonElement json, string repository, string architecture, Version current)
