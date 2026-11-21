@@ -7,3 +7,6 @@
 .env.*
 installer/out/
 relay/appsettings.Local.json
+relay/cloudflare/.dev.vars
+relay/cloudflare/.dev.vars.*
+relay/cloudflare/.wrangler/

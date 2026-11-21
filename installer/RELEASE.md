@@ -42,6 +42,28 @@ dotnet publish собирает папку программы. При автон
 
 ## Отчёты об ошибках через Telegram
 
+Пользователь открывает форму, пишет об ошибке или идее и нажимает **Отправить**. В Telegram приходят текст и версия RadialMenu. Форма закрывается после подтверждения доставки. При сбое сообщение остаётся в форме для повторной отправки.
+
+### Развёртывание с Cloudflare Workers
+
+1. Создай бота через [@BotFather](https://t.me/BotFather) командой `/newbot`. Открой личный чат с этим ботом и нажми **Старт**.
+2. Получи числовой `message.chat.id` вызовом [Telegram Bot API getUpdates](https://core.telegram.org/bots/api#getupdates) для своего бота. Токен вводи только в локальном терминале или прямо в секретах хостинга.
+3. Открой терминал в папке `relay/cloudflare` и разверни Worker. Нужны Node.js и Wrangler 4.36.0 или новее. При первом развёртывании Wrangler предложит войти в Cloudflare.
+
+       npx wrangler deploy
+       npx wrangler secret put TELEGRAM_BOT_TOKEN
+       npx wrangler secret put TELEGRAM_CHAT_ID
+
+4. Скопируй адрес Worker, добавь `/reports` и передай его в `-ReportEndpoint` при сборке установщика.
+
+Команда из папки проекта после развёртывания
+
+       .\installer\Build-Release.ps1 -Repository 'applimenu/RadialMenu' -Version '1.2.4' -ReportEndpoint 'https://radialmenu-feedback.SUBDOMAIN.workers.dev/reports'
+
+Worker обрабатывает сообщения длиной до 1200 символов. Лимиты отправки применяются по IP и на весь маршрут отдельно в каждой локации Cloudflare. Адрес чата и токен задаются через секреты Worker.
+
+### Развёртывание ASP.NET Core
+
 1. Создай бота через [@BotFather](https://t.me/BotFather) командой /newbot. Открой чат с новым ботом под своим аккаунтом и нажми Start.
 2. Узнай числовой chat_id своего чата из результата Telegram Bot API getUpdates, пока у бота нет вебхука. Используй токен только в локальном терминале или секретах хостинга. Не публикуй его в GitHub и не передавай в сборку RadialMenu.
 3. Опубликуй relay/RadialMenu.ReportRelay.csproj на хостинге ASP.NET Core с HTTPS. Установи серверные переменные Telegram__BotToken и Telegram__ChatId. Приложение будет отправлять введённый текст и номер своей версии в указанный чат через маршрут /reports. Успех показывается после подтверждения Telegram.

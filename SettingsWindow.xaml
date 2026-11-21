@@ -317,7 +317,8 @@
                         </StackPanel>
                     </Border>
                     <Border x:Name="ReportCard" Style="{StaticResource PanelCard}" Margin="0,8,0,0">
-                        <Button x:Name="ReportButton" Content="Сообщить об ошибке" Click="BugReport_Click" HorizontalAlignment="Left"/>
+                        <Button x:Name="ReportButton" Content="Сообщить об ошибке или предложить идею"
+                                Click="BugReport_Click" HorizontalAlignment="Left"/>
                     </Border>
                 </StackPanel>
             </TabItem>

@@ -32,7 +32,7 @@ internal sealed class TrayMenu : IDisposable
         _menu.Items.Add(themes);
         _menu.Items.Add("Проверить обновления", null, (s, e) => updates());
         if (ReportDelivery.CanReport)
-            _menu.Items.Add(ReportDelivery.CanSend ? "Сообщить об ошибке" : "Бот обратной связи", null, (s, e) => report());
+            _menu.Items.Add(ReportDelivery.CanSend ? "Ошибка или идея…" : "Бот обратной связи", null, (s, e) => report());
         _menu.Items.Add(new Forms.ToolStripSeparator());
         _menu.Items.Add("Выйти из RadialMenu", null, (s, e) => exit());
 

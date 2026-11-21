@@ -245,7 +245,7 @@ public partial class SettingsWindow : Window
     {
         if (ReportDelivery.CanSend)
         {
-            new BugReportWindow { Owner = this }.ShowDialog();
+            BugReportWindow.ShowFor(this);
             return;
         }
 

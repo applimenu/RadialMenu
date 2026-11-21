@@ -6,6 +6,7 @@ namespace RadialMenu1;
 
 public partial class BugReportWindow : Window
 {
+    private static BugReportWindow? _activeDialog;
     private readonly CancellationTokenSource _lifetime = new();
 
     public BugReportWindow()
@@ -21,12 +22,30 @@ public partial class BugReportWindow : Window
         };
     }
 
+    internal static void ShowFor(Window? owner)
+    {
+        if (_activeDialog is { } active)
+        {
+            active.Activate();
+            return;
+        }
+
+        var dialog = new BugReportWindow
+        {
+            Owner = owner,
+            WindowStartupLocation = owner == null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner
+        };
+        _activeDialog = dialog;
+        try { dialog.ShowDialog(); }
+        finally { _activeDialog = null; }
+    }
+
     private async void Send_Click(object sender, RoutedEventArgs e)
     {
         string description = Description.Text.Trim();
         if (description.Length == 0)
         {
-            DeliveryStatus.Text = "Добавь описание ошибки.";
+            DeliveryStatus.Text = "Напиши сообщение перед отправкой.";
             return;
         }
 
@@ -37,11 +56,11 @@ public partial class BugReportWindow : Window
         try
         {
             await ReportDelivery.SendAsync(description, cancellation);
-            if (!cancellation.IsCancellationRequested)
-            {
-                DeliveryStatus.Text = "Спасибо, отчёт доставлен.";
-                SendButton.Content = "Отправлено";
-            }
+            if (cancellation.IsCancellationRequested) return;
+            DeliveryStatus.Text = "Спасибо, сообщение доставлено.";
+            SendButton.Content = "Отправлено";
+            await Task.Delay(TimeSpan.FromSeconds(1.2), cancellation);
+            if (!cancellation.IsCancellationRequested) Close();
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException or OperationCanceledException)
         {

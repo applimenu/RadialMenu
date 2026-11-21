@@ -311,6 +311,12 @@ public partial class MainWindow : Window
 
     private void OpenReport()
     {
+        if (ReportDelivery.CanSend)
+        {
+            BugReportWindow.ShowFor(_settings is { IsVisible: true } ? _settings : null);
+            return;
+        }
+
         OpenSettings();
         _settings?.ShowBugReport();
     }
