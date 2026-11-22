@@ -45,6 +45,13 @@ if ($ReportBotUsername) { $publishArgs += "-p:ReportBotUsername=$ReportBotUserna
 dotnet @publishArgs
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish exited with $LASTEXITCODE." }
 
+$updateHostProject = Join-Path $PSScriptRoot 'UpdateHost/UpdateHost.csproj'
+$hostOutput = "${publish}-update-host"
+dotnet build $updateHostProject -c Release -o $hostOutput
+if ($LASTEXITCODE -ne 0) { throw "Update host build exited with $LASTEXITCODE." }
+Copy-Item -LiteralPath (Join-Path $hostOutput 'RadialMenu.UpdateHost.exe'),
+    (Join-Path $hostOutput 'RadialMenu.UpdateHost.exe.config') -Destination $publish
+
 $installerArgs = @("-dAppVersion=$Version", "-dBuildArch=$Architecture", "-dPublishDir=$publish",
     "-o$($output.FullName)", (Join-Path $PSScriptRoot 'RadialMenu.iss'))
 & $InnoCompiler @installerArgs

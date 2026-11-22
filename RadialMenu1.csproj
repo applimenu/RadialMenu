@@ -7,10 +7,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <Version>1.2.4</Version>
+    <Version>1.2.5</Version>
     <UpdateRepository Condition="'$(UpdateRepository)' == ''">applimenu/RadialMenu</UpdateRepository>
     <ReportEndpoint Condition="'$(ReportEndpoint)' == '' And '$(UpdateRepository)' == 'applimenu/RadialMenu'">https://radialmenu-feedback.applimenu-radialmenu.workers.dev/reports</ReportEndpoint>
-    <DefaultItemExcludes>$(DefaultItemExcludes);relay/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);relay/**;installer/UpdateHost/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

@@ -7,7 +7,9 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using ShapePath = System.Windows.Shapes.Path;
 
 namespace RadialMenu1;
 
@@ -30,6 +32,7 @@ public partial class SettingsWindow : Window
 
     private static AppConfig Cfg => ConfigStore.Current;
 
+
     private Mode? RootMode => ModeList.SelectedItem as Mode;
     private Mode? SelMode => _editedSubmenu?.Submenu ?? RootMode;
     private Entry? SelEntry => EntryList.SelectedItem as Entry;
@@ -41,6 +44,8 @@ public partial class SettingsWindow : Window
         _hotkeyAvailable = hotkeyAvailable;
         InitializeComponent();
         SettingsTheme.PreventMaximize(this);
+        if (Cfg.AnimationsEnabled) WindowSurface.Opacity = 0;
+        Loaded += (_, _) => UpdateTabIndicator(animate: false);
         _appearanceSave.Tick += (s, e) => SaveAppearance();
         Closed += (s, e) =>
         {
@@ -107,6 +112,80 @@ public partial class SettingsWindow : Window
         UpdateStatus.Text = $"Установлена версия {ReleaseUpdater.DisplayVersion}.";
         ReportCard.Visibility = ReportDelivery.CanReport ? Visibility.Visible : Visibility.Collapsed;
         if (!ReportDelivery.CanSend) ReportButton.Content = "Открыть бота в Telegram";
+    }
+
+    protected override void OnContentRendered(EventArgs e)
+    {
+        base.OnContentRendered(e);
+        if (WindowSurface.Opacity != 0) return;
+
+        WindowSurface.Opacity = 1;
+        if (!Cfg.AnimationsEnabled) return;
+
+        var duration = TimeSpan.FromMilliseconds(240);
+        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var fade = new DoubleAnimation(0, 1, duration) { EasingFunction = easing, FillBehavior = FillBehavior.Stop };
+        var zoom = new DoubleAnimation(0.975, 1, duration) { EasingFunction = easing, FillBehavior = FillBehavior.Stop };
+        WindowSurface.BeginAnimation(OpacityProperty, fade);
+        WindowScale.BeginAnimation(ScaleTransform.ScaleXProperty, zoom);
+        WindowScale.BeginAnimation(ScaleTransform.ScaleYProperty, zoom);
+    }
+
+    private void PreviewHeader_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount == 1 && e.LeftButton == MouseButtonState.Pressed)
+            DragMove();
+    }
+
+    private void CloseSettings_Click(object sender, RoutedEventArgs e) => Close();
+
+    private void SettingsTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (IsLoaded && e.Source == SettingsTabs)
+            Dispatcher.InvokeAsync(() => UpdateTabIndicator(animate: true), DispatcherPriority.Loaded);
+    }
+
+    private void SettingsTabs_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (IsLoaded) UpdateTabIndicator(animate: false);
+    }
+
+    private void UpdateTabIndicator(bool animate)
+    {
+        if (!IsLoaded || SettingsTabs.SelectedItem is not TabItem tab || tab.ActualWidth <= 1 || tab.ActualHeight <= 1 ||
+            SettingsTabs.Template.FindName("TabHeaderSurface", SettingsTabs) is not FrameworkElement header ||
+            SettingsTabs.Template.FindName("TabIndicator", SettingsTabs) is not ShapePath indicator)
+            return;
+
+        var target = new Rect(tab.TranslatePoint(new Point(0.5, 0.5), header),
+            new Size(tab.ActualWidth - 1, tab.ActualHeight - 1));
+        if (indicator.Data is not RectangleGeometry geometry)
+        {
+            indicator.Data = new RectangleGeometry(target, 9, 9);
+            return;
+        }
+
+        animate &= Cfg.AnimationsEnabled;
+        if (animate && (Rect)geometry.GetAnimationBaseValue(RectangleGeometry.RectProperty) == target) return;
+
+        var current = geometry.Rect;
+        geometry.BeginAnimation(RectangleGeometry.RectProperty, null);
+        geometry.Rect = target;
+        if (!animate || Math.Abs(current.Y - target.Y) > 1 || current == target) return;
+
+        // Move the leading edge first, then let the trailing edge catch up.
+        bool movingRight = target.Left > current.Left;
+        double left = current.Left + (target.Left - current.Left) * (movingRight ? 0.23 : 0.80);
+        double right = current.Right + (target.Right - current.Right) * (movingRight ? 0.80 : 0.23);
+        var stretch = new Rect(left, target.Y, Math.Max(1, right - left), target.Height);
+
+        var slide = new RectAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
+        slide.KeyFrames.Add(new DiscreteRectKeyFrame(current, KeyTime.FromTimeSpan(TimeSpan.Zero)));
+        slide.KeyFrames.Add(new SplineRectKeyFrame(stretch, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(125)),
+            new KeySpline(0.24, 0.10, 0.42, 0.88)));
+        slide.KeyFrames.Add(new SplineRectKeyFrame(target, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(300)),
+            new KeySpline(0.18, 0.48, 0.36, 1)));
+        geometry.BeginAnimation(RectangleGeometry.RectProperty, slide);
     }
 
     private void BehaviorToggle_Click(object sender, RoutedEventArgs e)
@@ -196,8 +275,7 @@ public partial class SettingsWindow : Window
                 UpdateStatus.Text = $"Установлена актуальная версия {ReleaseUpdater.DisplayVersion}.";
                 return;
             }
-            var version = _pendingUpdate.Version;
-            string display = version.ToString(version.Revision > 0 ? 4 : 3);
+            string display = _pendingUpdate.DisplayVersion;
             UpdateStatus.Text = $"Доступна версия {display}. Сейчас установлена {ReleaseUpdater.DisplayVersion}.";
             InstallUpdateButton.Content = $"Установить {display}";
             InstallUpdateButton.IsEnabled = true;
@@ -221,17 +299,34 @@ public partial class SettingsWindow : Window
         var cancellation = _serviceLifetime.Token;
         _updateBusy = true;
         CheckUpdateButton.IsEnabled = InstallUpdateButton.IsEnabled = false;
-        UpdateStatus.Text = "Скачиваю установщик и проверяю целостность…";
+        string status = $"Обновляем RadialMenu до {release.DisplayVersion}";
+        UpdateStatus.Text = status + " · 0%";
+        UpdateProgress.Value = 0;
+        UpdateProgress.Visibility = Visibility.Visible;
+        var progress = new Progress<int>(percent =>
+        {
+            if (cancellation.IsCancellationRequested || UpdateProgress.Visibility != Visibility.Visible ||
+                percent <= UpdateProgress.Value) return;
+            UpdateProgress.Value = percent;
+            UpdateStatus.Text = $"{status} · {percent}%";
+        });
         try
         {
-            await ReleaseUpdater.DownloadAndStartAsync(release, cancellation);
+            using var installer = await ReleaseUpdater.DownloadAsync(release, progress, cancellation);
+            UpdateProgress.Value = 100;
+            UpdateStatus.Text = status + " · установка…";
+            await Dispatcher.Yield(DispatcherPriority.Background);
+            cancellation.ThrowIfCancellationRequested();
+            installer.Start(release.Version, MenuPalette.From(Cfg), Cfg.AnimationsEnabled);
             Application.Current.Shutdown();
         }
-        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or IOException or UnauthorizedAccessException or
-                                       InvalidOperationException or OperationCanceledException or System.ComponentModel.Win32Exception)
+        catch (Exception ex) when (ex is System.Net.Http.HttpRequestException or IOException or InvalidDataException or
+                                       UnauthorizedAccessException or InvalidOperationException or OperationCanceledException or
+                                       System.ComponentModel.Win32Exception or SecurityException)
         {
             if (!cancellation.IsCancellationRequested)
             {
+                UpdateProgress.Visibility = Visibility.Collapsed;
                 UpdateStatus.Text = "Установка: " + ex.Message;
                 CheckUpdateButton.IsEnabled = InstallUpdateButton.IsEnabled = true;
             }
@@ -342,6 +437,7 @@ public partial class SettingsWindow : Window
     private void AnimationsToggle_Changed(object sender, RoutedEventArgs e)
     {
         Cfg.AnimationsEnabled = AnimationsToggle.IsChecked == true;
+        if (!Cfg.AnimationsEnabled) UpdateTabIndicator(animate: false);
         Preview.RefreshAppearance();
         QueueAppearanceSave();
     }

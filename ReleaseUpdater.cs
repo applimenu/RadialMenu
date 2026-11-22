@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -7,12 +8,19 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Win32;
 
 namespace RadialMenu1;
 
 internal static class ReleaseUpdater
 {
-    internal sealed record Release(Version Version, Uri Installer, string Sha256, long Size);
+    internal sealed record Release(Version Version, Uri Installer, string Sha256, long Size)
+    {
+        public string DisplayVersion => Version.ToString(Version.Revision > 0 ? 4 : 3);
+    }
+
+    private const string InstallerName = "RadialMenu-Setup.exe";
+    private const string UpdateHostName = "RadialMenu.UpdateHost.exe";
     private const long MaxInstallerSize = 512 * 1024 * 1024;
     private const string RepositoryNamePattern = @"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+";
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
@@ -87,10 +95,12 @@ internal static class ReleaseUpdater
         throw new InvalidOperationException($"Версия {version.ToString(version.Revision > 0 ? 4 : 3)} доступна, но в релизе нет проверяемого установщика {name}.");
     }
 
-    internal static async Task DownloadAndStartAsync(Release release, CancellationToken cancellation)
+    internal static async Task<DownloadedInstaller> DownloadAsync(Release release, IProgress<int> progress,
+        CancellationToken cancellation)
     {
+        CleanCompletedUpdates();
         var directory = Directory.CreateTempSubdirectory("RadialMenu-update-");
-        string installer = Path.Combine(directory.FullName, "RadialMenu-Setup.exe");
+        var downloaded = new DownloadedInstaller(directory);
         try
         {
             using var response = await Http.GetAsync(release.Installer, HttpCompletionOption.ResponseHeadersRead, cancellation)
@@ -99,11 +109,12 @@ internal static class ReleaseUpdater
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             deadline.CancelAfter(TimeSpan.FromMinutes(5));
             await using (var content = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false))
-            await using (var output = File.Open(installer, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            await using (var output = File.Open(downloaded.Path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
                 using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
                 var buffer = new byte[128 * 1024];
                 long length = 0;
+                int lastPercent = 0;
                 while (true)
                 {
                     int count = await content.ReadAsync(buffer, deadline.Token).ConfigureAwait(false);
@@ -112,21 +123,102 @@ internal static class ReleaseUpdater
                     if (length > release.Size) throw new InvalidDataException("Размер файла не совпадает с релизом.");
                     hash.AppendData(buffer, 0, count);
                     await output.WriteAsync(buffer.AsMemory(0, count), deadline.Token).ConfigureAwait(false);
+                    int percent = (int)Math.Min(99, length * 100 / release.Size);
+                    if (percent <= lastPercent) continue;
+                    lastPercent = percent;
+                    progress.Report(percent);
                 }
                 if (length != release.Size || !Convert.ToHexString(hash.GetHashAndReset()).Equals(release.Sha256, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("Проверка контрольной суммы установщика не прошла.");
             }
             cancellation.ThrowIfCancellationRequested();
-            using var process = Process.Start(new ProcessStartInfo(installer) { UseShellExecute = true });
-            if (process == null) throw new InvalidOperationException("Не удалось запустить установщик.");
+            return downloaded;
         }
         catch
         {
-            try { if (File.Exists(installer)) File.Delete(installer); directory.Delete(); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            downloaded.Dispose();
             throw;
         }
+    }
+
+    internal sealed class DownloadedInstaller(DirectoryInfo directory) : IDisposable
+    {
+        private bool _handedOff;
+        public string Path { get; } = System.IO.Path.Combine(directory.FullName, InstallerName);
+
+        public void Start(Version version, MenuPalette palette, bool animate)
+        {
+            string? executable = Environment.ProcessPath;
+            string updateHost = System.IO.Path.Combine(AppContext.BaseDirectory, UpdateHostName);
+            var start = executable is not null && File.Exists(updateHost) && IsInstalled(executable)
+                ? PrepareSilentUpdate(executable, updateHost, version, palette, animate)
+                : new ProcessStartInfo(Path) { UseShellExecute = true };
+
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("Не удалось запустить установщик.");
+            _handedOff = true;
+        }
+
+        private ProcessStartInfo PrepareSilentUpdate(string executable, string updateHost, Version version, MenuPalette palette, bool animate)
+        {
+            string copy = System.IO.Path.Combine(directory.FullName, UpdateHostName);
+            File.Copy(updateHost, copy);
+            if (File.Exists(updateHost + ".config")) File.Copy(updateHost + ".config", copy + ".config");
+            var start = new ProcessStartInfo(copy) { WorkingDirectory = directory.FullName, UseShellExecute = false };
+            using var current = Process.GetCurrentProcess();
+            start.ArgumentList.Add(current.Id.ToString(CultureInfo.InvariantCulture));
+            start.ArgumentList.Add(current.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture));
+            start.ArgumentList.Add(executable);
+            start.ArgumentList.Add(version.ToString(4));
+            start.ArgumentList.Add(palette.Center.ToString(CultureInfo.InvariantCulture));
+            start.ArgumentList.Add(palette.Text.ToString(CultureInfo.InvariantCulture));
+            start.ArgumentList.Add(palette.Accent.ToString(CultureInfo.InvariantCulture));
+            start.ArgumentList.Add(animate ? "1" : "0");
+            return start;
+        }
+
+        public void Dispose()
+        {
+            if (_handedOff) return;
+            TryRemoveUpdateDirectory(directory);
+        }
+    }
+
+    private static bool IsInstalled(string executable)
+    {
+        const string uninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\{D2C308C1-26BB-46A3-A7D3-1E28787782F5}_is1";
+        using var entry = Registry.CurrentUser.OpenSubKey(uninstallKey);
+        return entry?.GetValue("InstallLocation") is string folder && Path.IsPathFullyQualified(folder) &&
+            string.Equals(Path.GetFullPath(Path.Combine(folder, "RadialMenu1.exe")),
+                executable, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void CleanCompletedUpdates()
+    {
+        try
+        {
+            foreach (var directory in new DirectoryInfo(Path.GetTempPath()).EnumerateDirectories("RadialMenu-update-*"))
+            {
+                if ((directory.Attributes & FileAttributes.ReparsePoint) == 0 &&
+                    File.Exists(Path.Combine(directory.FullName, UpdateHostName)) &&
+                    !File.Exists(Path.Combine(directory.FullName, InstallerName)))
+                    TryRemoveUpdateDirectory(directory);
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+    }
+
+    private static void TryRemoveUpdateDirectory(DirectoryInfo directory)
+    {
+        try
+        {
+            File.Delete(Path.Combine(directory.FullName, InstallerName));
+            File.Delete(Path.Combine(directory.FullName, UpdateHostName));
+            File.Delete(Path.Combine(directory.FullName, UpdateHostName + ".config"));
+            directory.Delete();
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private static Version Normalize(Version version) =>
