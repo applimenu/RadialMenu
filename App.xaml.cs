@@ -9,6 +9,19 @@ namespace RadialMenu1
     /// </summary>
     public partial class App : Application
     {
+        private static bool _exiting;
+
+        internal static async Task RequestExitAsync()
+        {
+            if (_exiting) return;
+            _exiting = true;
+            try
+            {
+                await ScreenRecording.StopAsync();
+                Current.Shutdown();
+            }
+            finally { _exiting = false; }
+        }
     }
 
 }

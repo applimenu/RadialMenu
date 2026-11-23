@@ -1,36 +1,83 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:local="clr-namespace:RadialMenu1">
+    <DrawingBrush x:Key="StageDots" TileMode="Tile" Stretch="None" ViewportUnits="Absolute" Viewport="0,0,16,16">
+        <DrawingBrush.Drawing>
+            <DrawingGroup>
+                <GeometryDrawing Brush="Transparent"><GeometryDrawing.Geometry><RectangleGeometry Rect="0,0,16,16"/></GeometryDrawing.Geometry></GeometryDrawing>
+                <GeometryDrawing Brush="#338895A7"><GeometryDrawing.Geometry><EllipseGeometry Center="8,8" RadiusX=".8" RadiusY=".8"/></GeometryDrawing.Geometry></GeometryDrawing>
+            </DrawingGroup>
+        </DrawingBrush.Drawing>
+    </DrawingBrush>
+
+    <DataTemplate x:Key="ThemeTile">
+        <StackPanel>
+            <Border Height="55" CornerRadius="11" Background="{Binding Surface}" BorderThickness="1" BorderBrush="#40868995">
+                <Grid>
+                    <Border CornerRadius="10">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint=".9,1">
+                                <GradientStop Color="#24FFFFFF"/><GradientStop Offset=".55" Color="#03FFFFFF"/>
+                                <GradientStop Offset="1" Color="#20000000"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+                    <Viewbox Width="44" Height="44" IsHitTestVisible="False">
+                        <Canvas Width="48" Height="48">
+                            <Ellipse Canvas.Left="2" Canvas.Top="2" Width="44" Height="44" Fill="{Binding Surface}" Stroke="{Binding Accent}" Opacity=".85"/>
+                            <Path Data="M9,8 A22,22 0 0 1 39,8 L30,18 A9,9 0 0 0 18,18 Z" Fill="{Binding Accent}" Opacity=".76"/>
+                            <Path Data="M8,9 L18,19 M40,9 L30,19 M8,39 L18,29 M40,39 L30,29"
+                                  Stroke="{Binding Accent}" StrokeThickness=".8" Opacity=".65"/>
+                            <Ellipse Canvas.Left="15" Canvas.Top="15" Width="18" Height="18" Fill="{Binding Surface}" Stroke="{Binding Accent}"/>
+                            <Ellipse Canvas.Left="22" Canvas.Top="22" Width="4" Height="4" Fill="{Binding Accent}"/>
+                        </Canvas>
+                    </Viewbox>
+                </Grid>
+            </Border>
+            <TextBlock Text="{Binding Name}" Margin="2,4,0,0" FontSize="12" TextWrapping="Wrap"/>
+        </StackPanel>
+    </DataTemplate>
+
     <Style TargetType="Button">
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
         <Setter Property="Background" Value="{DynamicResource ThemeControl}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
-        <Setter Property="Padding" Value="11,6"/>
-        <Setter Property="MinHeight" Value="32"/>
+        <Setter Property="Padding" Value="12,4"/>
+        <Setter Property="MinHeight" Value="30"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
-                    <Border x:Name="Chrome" CornerRadius="7" BorderThickness="1"
-                            Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
-                            Padding="{TemplateBinding Padding}">
-                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
-                                          RecognizesAccessKey="True"
-                                          TextElement.Foreground="{TemplateBinding Foreground}"/>
-                    </Border>
+                    <Grid x:Name="ButtonBody" RenderTransformOrigin=".5,.5">
+                        <Grid.RenderTransform><ScaleTransform x:Name="PressScale"/></Grid.RenderTransform>
+                        <VisualStateManager.CustomVisualStateManager><local:SettingsStateManager/></VisualStateManager.CustomVisualStateManager>
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualStateGroup.Transitions><VisualTransition GeneratedDuration="0:0:0.13"/></VisualStateGroup.Transitions>
+                                <VisualState x:Name="Normal"/>
+                                <VisualState x:Name="MouseOver"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Sheen" Storyboard.TargetProperty="Opacity" To="1" Duration="0"/>
+                                </Storyboard></VisualState>
+                                <VisualState x:Name="Pressed"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="PressScale" Storyboard.TargetProperty="ScaleX" To=".97" Duration="0"/>
+                                    <DoubleAnimation Storyboard.TargetName="PressScale" Storyboard.TargetProperty="ScaleY" To=".97" Duration="0"/>
+                                    <DoubleAnimation Storyboard.TargetName="Sheen" Storyboard.TargetProperty="Opacity" To=".65" Duration="0"/>
+                                </Storyboard></VisualState>
+                                <VisualState x:Name="Disabled"/>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <Border x:Name="Chrome" CornerRadius="14" BorderThickness="1" BorderBrush="{TemplateBinding BorderBrush}"
+                                Background="{TemplateBinding Background}"/>
+                        <Border x:Name="Sheen" CornerRadius="14" Background="#18AAAAAA" Opacity="0"/>
+                        <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          RecognizesAccessKey="True" TextElement.Foreground="{TemplateBinding Foreground}"/>
+                    </Grid>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/>
-                        </Trigger>
-                        <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="Chrome" Property="Opacity" Value="0.8"/>
-                        </Trigger>
                         <Trigger Property="IsKeyboardFocused" Value="True">
                             <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/>
                         </Trigger>
-                        <Trigger Property="IsEnabled" Value="False">
-                            <Setter TargetName="Chrome" Property="Opacity" Value="0.5"/>
-                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ButtonBody" Property="Opacity" Value=".48"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
@@ -74,18 +121,23 @@
                 <ControlTemplate TargetType="TabControl">
                     <Grid KeyboardNavigation.TabNavigation="Local">
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="140"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
                         <Grid x:Name="TabHeaderSurface" ClipToBounds="True">
                             <Canvas IsHitTestVisible="False">
                                 <Path x:Name="TabIndicator" Fill="{DynamicResource ThemeSelected}"
-                                      Stroke="{DynamicResource ThemeBorder}"/>
+                                      StrokeThickness="0"/>
                             </Canvas>
-                            <TabPanel IsItemsHost="True" KeyboardNavigation.TabIndex="0"/>
+                            <StackPanel IsItemsHost="True" KeyboardNavigation.TabIndex="0"/>
                         </Grid>
-                        <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Row="1"
-                                          ContentSource="SelectedContent" Margin="0,14,0,0"/>
+                        <ContentPresenter x:Name="PART_SelectedContentHost" Grid.Column="1"
+                                          ContentSource="SelectedContent" Margin="12,0,0,0">
+                            <ContentPresenter.RenderTransform><TranslateTransform/></ContentPresenter.RenderTransform>
+                        </ContentPresenter>
                     </Grid>
                 </ControlTemplate>
             </Setter.Value>
@@ -95,15 +147,20 @@
     <Style TargetType="TabItem">
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
         <Setter Property="Cursor" Value="Hand"/>
-        <Setter Property="Margin" Value="0,0,6,0"/>
+        <Setter Property="Margin" Value="0,0,0,4"/>
+        <Setter Property="HorizontalAlignment" Value="Stretch"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TabItem">
-                    <Border x:Name="Chrome" CornerRadius="8" BorderThickness="1"
-                            Background="Transparent" BorderBrush="Transparent" Padding="14,8">
-                        <ContentPresenter x:Name="HeaderLabel" ContentSource="Header" RecognizesAccessKey="True"
-                                          TextElement.Foreground="{TemplateBinding Foreground}"
-                                          TextElement.FontWeight="SemiBold"/>
+                    <Border x:Name="Chrome" CornerRadius="12" BorderThickness="1"
+                            Background="Transparent" BorderBrush="Transparent" Padding="9,9">
+                        <DockPanel>
+                            <TextBlock Text="{TemplateBinding Tag}" Margin="0,0,7,0" VerticalAlignment="Center"
+                                       FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Width="13"/>
+                            <ContentPresenter x:Name="HeaderLabel" ContentSource="Header" RecognizesAccessKey="True"
+                                              VerticalAlignment="Center"
+                                              TextElement.Foreground="{TemplateBinding Foreground}"/>
+                        </DockPanel>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
@@ -112,7 +169,7 @@
                         <Trigger Property="IsSelected" Value="True">
                             <Setter TargetName="Chrome" Property="Background" Value="Transparent"/>
                             <Setter TargetName="HeaderLabel" Property="TextElement.Foreground"
-                                    Value="{DynamicResource ThemeAccentText}"/>
+                                    Value="{DynamicResource ThemeText}"/>
                         </Trigger>
                         <Trigger Property="IsKeyboardFocused" Value="True">
                             <Setter TargetName="Chrome" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/>
@@ -139,7 +196,7 @@
             <Setter.Value>
                 <ControlTemplate TargetType="ListBoxItem">
                     <Border x:Name="Chrome" Background="Transparent" BorderBrush="Transparent"
-                            CornerRadius="7" Padding="{TemplateBinding Padding}" BorderThickness="1">
+                            CornerRadius="12" Padding="{TemplateBinding Padding}" BorderThickness="1">
                         <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
                                           TextElement.Foreground="{TemplateBinding Foreground}"/>
                     </Border>
@@ -160,18 +217,53 @@
         </Setter>
     </Style>
 
+    <Style x:Key="ChoiceChip" TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+        <Setter Property="Margin" Value="0,1,4,3"/>
+        <Setter Property="Padding" Value="9,5"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBoxItem">
+                    <Grid>
+                        <Border x:Name="Pill" Background="{DynamicResource ThemeControl}" BorderBrush="Transparent" BorderThickness="1"
+                                CornerRadius="15" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <Border x:Name="Light" CornerRadius="15" Background="#16BBBBBB" IsHitTestVisible="False" Opacity="0"/>
+                        <VisualStateManager.CustomVisualStateManager><local:SettingsStateManager/></VisualStateManager.CustomVisualStateManager>
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualStateGroup.Transitions><VisualTransition GeneratedDuration="0:0:0.13"/></VisualStateGroup.Transitions>
+                                <VisualState x:Name="Normal"/><VisualState x:Name="MouseOver"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Light" Storyboard.TargetProperty="Opacity" To="1" Duration="0"/>
+                                </Storyboard></VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Pill" Property="Background" Value="{DynamicResource ThemeSelected}"/>
+                            <Setter TargetName="Pill" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/>
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Pill" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="PanelCard" TargetType="Border">
         <Setter Property="Background" Value="{DynamicResource ThemePanel}"/>
         <Setter Property="BorderBrush" Value="{DynamicResource ThemeBorder}"/>
         <Setter Property="BorderThickness" Value="1"/>
-        <Setter Property="CornerRadius" Value="14"/>
-        <Setter Property="Padding" Value="13"/>
+        <Setter Property="CornerRadius" Value="18"/>
+        <Setter Property="Padding" Value="15,13"/>
     </Style>
 
     <Style x:Key="SectionTitle" TargetType="TextBlock">
-        <Setter Property="FontSize" Value="16"/>
+        <Setter Property="FontSize" Value="14"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
-        <Setter Property="Margin" Value="0,0,0,10"/>
+        <Setter Property="Margin" Value="0,0,0,7"/>
     </Style>
 
     <Style x:Key="SliderPage" TargetType="RepeatButton">
@@ -186,7 +278,7 @@
     </Style>
 
     <Style TargetType="ScrollBar">
-        <Setter Property="Width" Value="12"/>
+        <Setter Property="Width" Value="8"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ScrollBar">
@@ -234,6 +326,27 @@
         </Style.Triggers>
     </Style>
 
+    <Style x:Key="SettingsPageScroll" TargetType="ScrollViewer">
+        <Setter Property="Focusable" Value="False"/>
+        <Setter Property="HorizontalScrollBarVisibility" Value="Disabled"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollViewer">
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" CanContentScroll="{TemplateBinding CanContentScroll}"
+                                                Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"/>
+                        <ScrollBar x:Name="PART_VerticalScrollBar" Grid.Column="1" Orientation="Vertical"
+                                   Width="9" Margin="2,1,0,1" Maximum="{TemplateBinding ScrollableHeight}"
+                                   ViewportSize="{TemplateBinding ViewportHeight}" Value="{TemplateBinding VerticalOffset}"
+                                   Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"
+                                   Style="{StaticResource {x:Type ScrollBar}}"/>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style TargetType="ContextMenu">
         <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
         <Setter Property="HasDropShadow" Value="True"/>
@@ -277,29 +390,39 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="CheckBox">
-                    <StackPanel Orientation="Horizontal" Background="Transparent" MinHeight="24">
-                        <Border x:Name="Box" Width="18" Height="18" CornerRadius="5" BorderThickness="1"
-                                Background="{DynamicResource ThemeControl}" BorderBrush="{DynamicResource ThemeBorder}"
-                                VerticalAlignment="Center">
-                            <Path x:Name="Check" Data="M 2,7 L 5,10 L 11,3" Stretch="None"
-                                  Stroke="{DynamicResource ThemeOnAccent}" StrokeThickness="1.8"
-                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                  HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
-                        </Border>
-                        <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center"
-                                          TextElement.Foreground="{TemplateBinding Foreground}"/>
-                    </StackPanel>
+                    <Grid x:Name="SwitchRow" Background="Transparent" MinHeight="32">
+                        <VisualStateManager.CustomVisualStateManager><local:SettingsStateManager/></VisualStateManager.CustomVisualStateManager>
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CheckStates">
+                                <VisualStateGroup.Transitions><VisualTransition GeneratedDuration="0:0:0.13"/></VisualStateGroup.Transitions>
+                                <VisualState x:Name="Unchecked"/>
+                                <VisualState x:Name="Checked"><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="Slide" Storyboard.TargetProperty="X" To="16" Duration="0"/>
+                                    <DoubleAnimation Storyboard.TargetName="OnTrack" Storyboard.TargetProperty="Opacity" To="1" Duration="0"/>
+                                </Storyboard></VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <ContentPresenter Margin="1,2,8,2" VerticalAlignment="Center" RecognizesAccessKey="True"
+                                          TextElement.Foreground="{TemplateBinding Foreground}">
+                            <ContentPresenter.Resources>
+                                <Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style>
+                            </ContentPresenter.Resources>
+                        </ContentPresenter>
+                        <Grid Grid.Column="1" Width="36" Height="20" Margin="0,0,2,0" VerticalAlignment="Center">
+                            <Border x:Name="TrackRim" Background="{DynamicResource ThemeBorder}" BorderThickness="1" CornerRadius="10"/>
+                            <Border x:Name="OnTrack" Background="#209D60" CornerRadius="10" Opacity="0"/>
+                            <Ellipse Width="16" Height="16" Fill="White" HorizontalAlignment="Left" Margin="2,0,0,0">
+                                <Ellipse.RenderTransform><TranslateTransform x:Name="Slide"/></Ellipse.RenderTransform>
+                            </Ellipse>
+                            <Border x:Name="SwitchFocus" Margin="-2" BorderThickness="1" CornerRadius="12"
+                                    BorderBrush="{DynamicResource ThemeFocus}" Visibility="Hidden" IsHitTestVisible="False"/>
+                        </Grid>
+                    </Grid>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsChecked" Value="True">
-                            <Setter TargetName="Box" Property="Background" Value="{DynamicResource ThemeAccent}"/>
-                            <Setter TargetName="Check" Property="Visibility" Value="Visible"/>
-                        </Trigger>
-                        <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/>
-                        </Trigger>
-                        <Trigger Property="IsKeyboardFocused" Value="True">
-                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/>
-                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="TrackRim" Property="BorderBrush" Value="{DynamicResource ThemeFocus}"/></Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="SwitchFocus" Property="Visibility" Value="Visible"/></Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter TargetName="SwitchRow" Property="Opacity" Value=".48"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>

@@ -3,38 +3,40 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Effects;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 
 namespace RadialMenu1;
 
 /// <summary>
-/// Само круглое меню: диск с секторами, плавно скользящая подсветка,
-/// значки, название в центре, точки режимов. Используется и в главном окне,
-/// и в окне настроек (как живой предпросмотр).
+/// Круговое меню для главного окна и живого предпросмотра в настройках.
 /// </summary>
-public sealed class RadialView : Canvas
+public sealed partial class RadialView : Canvas
 {
     // ---------- размеры ----------
     public const double ViewSize = 400;
     private const double C = ViewSize / 2;      // центр
-    private const double OuterR = 150;          // внешний радиус диска
+    private const double OuterR = 140;          // общий внешний радиус колеса
     internal const double GlassDiameter = OuterR * 2;
     private const double InnerR = 63;
     private const double CursorR = 173;
     private const double EscapeMargin = 35;
-    private static readonly Rect SettingsArea = new(C - 47, C + 8, 94, 27);
+    private static readonly Entry SettingsEntry = new("Настройки кругового меню", "", "\uE713");
+    private static readonly Lazy<ImageSource> SettingsIcon = new(() =>
+    {
+        var uri = new Uri("pack://application:,,,/RadialMenu1;component/app.ico");
+        using var stream = Application.GetResourceStream(uri).Stream;
+        var decoder = new IconBitmapDecoder(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+        var icon = decoder.Frames.MaxBy(frame => frame.PixelWidth)!;
+        icon.Freeze();
+        return icon;
+    });
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool SetCursorPos(int x, int y);
     private const double IconR = (OuterR + InnerR) / 2;
     private const double IconBox = 45;
-
-    // ---------- пружины ----------
-    private const double SpringK = 380;         // появление и значки
-    private const double SpringDamp = 22;
-    private const double SlideK = 480;          // скольжение подсветки
-    private const double SlideDamp = 32;
+    private const double IconHoverScale = 0.14;
 
     // ---------- события для окна-хозяина ----------
     public event Action<Entry>? ItemInvoked;
@@ -50,13 +52,14 @@ public sealed class RadialView : Canvas
     public Func<Mode?>? ModeSource { get; set; }
 
     private Mode? _submenu;
+    private readonly Mode _emptyMode = new("Без приложений");
 
     public bool IsOpen => _open;
-    internal bool IsFullyOpen => _open && _menuT >= 0.96;
 
     public double SetMenuScale(int percent)
     {
         _displayScale = percent / 100.0;
+        _statusRing.SetScale(_displayScale);
         LayoutTransform = new ScaleTransform(_displayScale, _displayScale);
         return ViewSize * _displayScale;
     }
@@ -75,34 +78,30 @@ public sealed class RadialView : Canvas
     private readonly System.Windows.Shapes.Path _dividers = new();
     private readonly Canvas _iconLayer = new();
     private readonly Ellipse _centerDisc = new();
-    private readonly Grid _centerHost = new();
-    private readonly TextBlock _centerText = new();
+    private readonly Grid _centerHost = new() { ClipToBounds = true };
+    private readonly TextBlock _centerText = new() { IsHitTestVisible = false };
     private readonly Canvas _dots = new();
-    private readonly Border _settingsPill = new() { CornerRadius = new CornerRadius(13.5), BorderThickness = new Thickness(1) };
-    private readonly TextBlock _settingsLabel = new() { Text = "Настройки", FontSize = 11.5, FontWeight = FontWeights.SemiBold,
-        HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-    private Brush? _pillNormal;
-    private Brush? _pillActive;
     private Brush? _tileNormal;
     private Brush? _tileBorder;
     private readonly Image _dragIcon = new()
     {
         Width = 30, Height = 30, Opacity = 0.85, IsHitTestVisible = false, Visibility = Visibility.Collapsed
     };
-    private readonly DropShadowEffect _discShadow = new() { BlurRadius = 26, ShadowDepth = 5, Direction = 270, Opacity = 0.50 };
-    private readonly DropShadowEffect _highlightGlow = new() { BlurRadius = 18, ShadowDepth = 0, Opacity = 0.55 };
-    private readonly DropShadowEffect _centerGlow = new() { BlurRadius = 16, ShadowDepth = 0, Opacity = 0.42 };
+    private readonly RadialEffects _effects = new() { Width = ViewSize, Height = ViewSize };
 
     private sealed class Slot
     {
         public Entry Entry = null!;
         public Grid Holder = null!;
-        public Border Tile = null!;
+        public Border? Tile;
         public Image Icon = null!;
         public ScaleTransform Scale = null!;
+        public readonly TranslateTransform Offset = new();
+        public StyledSlot? Style;
         public double T;            // 0 = в центре, 1 = на месте
-        public double V;
+        public double IconT;
         public double Delay;
+        public double Phase, FromPhase;
         public double Hover;
         public double HoverTarget;
     }
@@ -112,7 +111,9 @@ public sealed class RadialView : Canvas
     // ---------- состояние ----------
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private double _last;
-    private double _changedAt;
+    private double _transitionStart = double.NaN;
+    private readonly Canvas _outgoing = new() { IsHitTestVisible = false };
+    private double _fadeStart;
     private bool _open;
     private bool _rendering;
     private bool _animationsEnabled;
@@ -127,8 +128,6 @@ public sealed class RadialView : Canvas
 
     private int _hover = -1;
     private bool _hoverCenter;
-    private bool _hoverGear;
-    private double _gearHover;
 
     private double _hlAngle, _hlVel, _hlTarget;
     private double _hlOpacity, _hlTargetOpacity;
@@ -173,17 +172,14 @@ public sealed class RadialView : Canvas
         Canvas.SetTop(_centerDisc, C - InnerR);
 
         // название в центре
-        _centerHost.Width = 110;
-        _centerHost.Height = 30;
-        Canvas.SetLeft(_centerHost, C - 55);
-        Canvas.SetTop(_centerHost, C - 37);
+        _centerHost.Height = 44;
+        Canvas.SetTop(_centerHost, C - _centerHost.Height / 2);
         _centerText.TextAlignment = TextAlignment.Center;
-        _centerText.TextWrapping = TextWrapping.NoWrap;
+        _centerText.TextWrapping = TextWrapping.Wrap;
         _centerText.TextTrimming = TextTrimming.CharacterEllipsis;
-        _centerText.MaxHeight = 50;
+        _centerText.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
         _centerText.HorizontalAlignment = HorizontalAlignment.Center;
         _centerText.VerticalAlignment = VerticalAlignment.Center;
-        _centerText.FontSize = 15;
         _centerText.FontWeight = FontWeights.SemiBold;
         _centerText.FontFamily = new FontFamily("Segoe UI Variable Display, Segoe UI");
         _centerHost.Children.Add(_centerText);
@@ -201,35 +197,46 @@ public sealed class RadialView : Canvas
         _menu.Children.Add(_dividers);
         _menu.Children.Add(_centerDisc);
         _menu.Children.Add(_cursorGlow);
+        InitializeStyledLayers();
+        _menu.Children.Add(_outgoing);
         _menu.Children.Add(_iconLayer);
         _menu.Children.Add(_centerHost);
         _menu.Children.Add(_dots);
-        _settingsPill.Child = _settingsLabel;
-        _settingsPill.Width = SettingsArea.Width;
-        _settingsPill.Height = SettingsArea.Height;
-        Canvas.SetLeft(_settingsPill, SettingsArea.X);
-        Canvas.SetTop(_settingsPill, SettingsArea.Y);
-        _menu.Children.Add(_settingsPill);
+        _menu.Children.Add(_statusRing);
 
         Children.Add(_menu);
+        Children.Add(_effects);
         Children.Add(_dragIcon);
 
         Loaded += (s, e) =>
         {
             ConfigStore.Changed -= OnConfigChanged;
             ConfigStore.Changed += OnConfigChanged;
+            ChameleonMonitor.PaletteChanged += OnChameleonChanged;
             if (IsPreview) Open();
+            else SynchronizeStatusRing();
         };
         Unloaded += (s, e) =>
         {
             ConfigStore.Changed -= OnConfigChanged;
+            ChameleonMonitor.PaletteChanged -= OnChameleonChanged;
+            StopWatchingStatus();
             StopRendering();
+        };
+        IsVisibleChanged += (_, _) =>
+        {
+            SynchronizeStatusRing();
+            if (IsPreview && _open) StartRendering();
         };
 
         Rebuild(false);
     }
 
-    private void OnConfigChanged() => Rebuild(false);
+    private void OnConfigChanged() => Rebuild(IsPreview && _style != ConfigStore.Current.MenuStyle);
+    private void OnChameleonChanged()
+    {
+        if (_open && ConfigStore.Current.Theme == MenuTheme.Chameleon) RefreshAppearance();
+    }
 
     // =====================================================================
     //  Какой режим сейчас показываем
@@ -243,7 +250,9 @@ public sealed class RadialView : Canvas
             if (picked != null) return picked;
 
             var cfg = ConfigStore.Current;
-            int i = Math.Clamp(cfg.ActiveMode, 0, cfg.Modes.Count - 1);
+            if (cfg.Modes.Count == 0) return _emptyMode;
+            int i = cfg.AvailableModeIndex(cfg.ActiveMode, 1);
+            if (i < 0) i = Math.Clamp(cfg.ActiveMode, 0, cfg.Modes.Count - 1);
             return cfg.Modes[i];
         }
     }
@@ -253,41 +262,42 @@ public sealed class RadialView : Canvas
     // =====================================================================
     public void Open()
     {
-        if (_submenu != null)
+        if (_submenu != null || _style != ConfigStore.Current.MenuStyle)
         {
             _submenu = null;
             Rebuild(false);
         }
         RefreshAppearance();
         MoveCursorGlow(new Point(C, C));
-        if (!_open && _menuT > 0.05)
+        if (!_open && _rendering && (_menuT > 0 || _slots.Any(s => s.Phase > 0)))
         {
             // меню ещё закрывалось: просто разворачиваем обратно
             _open = true;
-            _changedAt = Now() - 10;
+            BeginSlotTransition();
+            SynchronizeStatusRing();
             StartRendering();
             return;
         }
 
         _open = true;
-        _changedAt = Now();
+        _effects.Reset();
         foreach (var s in _slots)
         {
-            s.T = 0;
-            s.V = 0;
+            s.Phase = s.T = s.IconT = 0;
             s.Hover = 0;
             s.HoverTarget = 0;
         }
+        BeginSlotTransition();
         _menuT = 0;
         _menuV = 0;
         _hover = -1;
         _hoverCenter = false;
-        _hoverGear = false;
-        _gearHover = 0;
+        SetStatusHover(null);
         _hlOpacity = 0;
         _hlTargetOpacity = 0;
         _hlVel = 0;
         UpdateCenterText();
+        SynchronizeStatusRing();
         ApplyVisuals();
         StartRendering();
     }
@@ -297,13 +307,15 @@ public sealed class RadialView : Canvas
         if (!_open) return;
 
         _open = false;
+        BeginSlotTransition();
         if (IsMouseCaptured) ReleaseMouseCapture();
         foreach (var s in _slots) s.HoverTarget = 0;
         _hover = -1;
         _hoverCenter = false;
-        _hoverGear = false;
+        SetStatusHover(null);
         _hlTargetOpacity = 0;
         UpdateCenterText();
+        SynchronizeStatusRing();
         StartRendering();
     }
 
@@ -312,14 +324,18 @@ public sealed class RadialView : Canvas
         var cfg = ConfigStore.Current;
         int n = cfg.Modes.Count;
         if (!_open || IsPreview) return;
-        if (n < 2)
+        int current = cfg.AvailableModeIndex(cfg.ActiveMode, 1);
+        if (current < 0) return;
+        direction = Math.Sign(direction);
+        int next = cfg.AvailableModeIndex((current + direction + n) % n, direction);
+        if (next == current)
         {
             TryGoBack();
             return;
         }
 
         _submenu = null;
-        cfg.ActiveMode = ((cfg.ActiveMode + direction) % n + n) % n;
+        cfg.ActiveMode = next;
         ConfigStore.Save();
         Rebuild(true);
     }
@@ -327,7 +343,7 @@ public sealed class RadialView : Canvas
     public void SetMode(int index)
     {
         var cfg = ConfigStore.Current;
-        if (!_open || IsPreview || index < 0 || index >= cfg.Modes.Count) return;
+        if (!_open || IsPreview || !cfg.IsModeAvailable(index)) return;
         if (index == cfg.ActiveMode)
         {
             TryGoBack();
@@ -355,24 +371,41 @@ public sealed class RadialView : Canvas
     {
         if (_previewDragMode != null) CancelPreviewDrag();
         var config = ConfigStore.Current;
+        _outgoing.Children.Clear();
+        if (animate && _open && IsVisible && config.AnimationsEnabled)
+        {
+            // Retain the already rendered tiles for a short crossfade on a mode/style change.
+            foreach (var layer in new[] { _shapeLayer, _iconLayer })
+            {
+                var visuals = layer.Children.Cast<UIElement>().ToArray();
+                layer.Children.Clear();
+                foreach (var visual in visuals) _outgoing.Children.Add(visual);
+            }
+            _outgoing.Opacity = 1;
+            _fadeStart = double.NaN;
+        }
         if (!config.SubmenusEnabled) _submenu = null;
+        _style = config.MenuStyle;
+        bool classic = _style == MenuStyle.Classic;
         var mode = CurrentMode;
         var palette = MenuPalette.From(config);
+        ApplyLayoutChrome();
+        _iconLayer.Children.Clear();
+        _shapeLayer.Children.Clear();
+        _slots.Clear();
         ApplyAppearance(palette);
 
-        _iconLayer.Children.Clear();
-        _slots.Clear();
-
-        int i = 0;
-        foreach (var entry in mode.Items)
+        const double iconSize = 30;
+        double initialProgress = _open && !animate ? 1 : 0;
+        var entries = mode.VisibleItems(config.SubmenusEnabled).ToList();
+        if (entries.Count > 0) entries.Insert(0, SettingsEntry);
+        foreach (var entry in entries)
         {
-            if (entry.Submenu != null && !config.SubmenusEnabled) continue;
-
             var image = new Image
             {
-                Source = IconService.Get(entry, palette.Text),
-                Width = 30,
-                Height = 30,
+                Source = SlotIcon(entry, palette.Text),
+                Width = iconSize,
+                Height = iconSize,
                 Stretch = Stretch.Uniform
             };
             RenderOptions.SetBitmapScalingMode(image, BitmapScalingMode.HighQuality);
@@ -383,130 +416,140 @@ public sealed class RadialView : Canvas
                 Width = IconBox,
                 Height = IconBox,
                 Opacity = 0,
-                RenderTransformOrigin = new Point(0.5, 0.5),
-                RenderTransform = scale
+                RenderTransformOrigin = new Point(0.5, 0.5)
             };
-            var tile = new Border { CornerRadius = new CornerRadius(14), Background = _tileNormal,
-                BorderBrush = _tileBorder, BorderThickness = new Thickness(1) };
-            holder.Children.Add(tile);
+            Border? tile = null;
+            if (classic)
+            {
+                tile = new Border { CornerRadius = new CornerRadius(14), Background = _tileNormal,
+                    BorderBrush = _tileBorder, BorderThickness = new Thickness(1) };
+                holder.Children.Add(tile);
+            }
             holder.Children.Add(image);
             _iconLayer.Children.Add(holder);
 
-            _slots.Add(new Slot
+            var slot = new Slot
             {
                 Entry = entry,
                 Holder = holder,
                 Tile = tile,
                 Icon = image,
                 Scale = scale,
-                Delay = i * 0.03,
-                T = (_open && !animate) ? 1 : 0
-            });
-            i++;
+                Phase = initialProgress,
+                T = initialProgress,
+                IconT = initialProgress
+            };
+            var transforms = new TransformGroup();
+            transforms.Children.Add(scale);
+            transforms.Children.Add(slot.Offset);
+            holder.RenderTransform = transforms;
+            SetLeft(holder, C - IconBox / 2);
+            SetTop(holder, C - IconBox / 2);
+            _slots.Add(slot);
         }
 
         _hover = -1;
         _hoverCenter = false;
-        _hoverGear = false;
+        SetStatusHover(null);
         _hlAngle = 0;
         _hlVel = 0;
         _hlTarget = 0;
         _hlOpacity = 0;
         _hlTargetOpacity = 0;
-        if (animate) _changedAt = Now();
+        BeginSlotTransition();
 
-        BuildDividers(_slots.Count);
+        BuildDividers(classic ? _slots.Count : 0);
+        if (!classic) BuildStyledSlots();
+        _effects.Configure(_style, palette.Accent, _slots.Count);
+        UpdateEmptyState(palette);
         BuildDots(palette);
         UpdateCenterText();
+        SynchronizeStatusRing();
         ApplyVisuals();
         if (_open) StartRendering();
     }
 
     internal void RefreshAppearance()
     {
+        bool previousMotion = _animationsEnabled;
         var palette = MenuPalette.From(ConfigStore.Current);
         ApplyAppearance(palette);
         BuildDots(palette);
-        if (_rendering && !_animationsEnabled) StartRendering();
+        SynchronizeStatusRing();
+        if (IsPreview && _slots.Count == 0) UpdateEmptyState(palette);
+        if ((_open && previousMotion != _animationsEnabled) || (_rendering && !_animationsEnabled)) StartRendering();
+        else ApplyVisuals();
     }
 
     internal void SetGlassBackdrop(ImageSource? image)
     {
         _glassBackdrop.Fill = image == null ? null : new ImageBrush(image) { Stretch = Stretch.Fill };
+        _styledGlassImage.ImageSource = image;
     }
 
     private void ApplyAppearance(MenuPalette palette)
     {
         var config = ConfigStore.Current;
+        _statusRing.ApplyPalette(palette);
         double opacity = 1 - config.TransparencyPercent / 100.0;
         _animationsEnabled = config.AnimationsEnabled;
+        _effects.Enabled = _animationsEnabled && config.SelectionEffectsEnabled;
+        _effects.Configure(_style, palette.Accent, _slots.Count);
         _glass = config.Theme == MenuTheme.Glass;
-        _glassBackdrop.Opacity = _glass && _animationsEnabled ? opacity : 0;
-        if (IsPreview) SetGlassBackdrop(_glass && _animationsEnabled && opacity > 0 ? GlassBackdrop.Preview.Value : null);
+        _glassBackdrop.Opacity = _glass ? opacity : 0;
+        if (IsPreview && _glass && opacity > 0 && _styledGlassImage.ImageSource == null)
+            SetGlassBackdrop(GlassBackdrop.Preview.Value);
 
         if (_glass)
         {
-            _disc.Fill = palette.HasCustomBackground
-                ? new LinearGradientBrush(WithAlpha(palette.Control, 124), WithAlpha(palette.Disc, 208), 125)
-                : new LinearGradientBrush(Color.FromArgb(22, 226, 242, 255), Color.FromArgb(76, 12, 18, 32), 125);
-            _disc.Fill.Opacity = opacity;
-            _disc.Stroke = new LinearGradientBrush(Color.FromArgb(210, 243, 251, 255),
-                Color.FromArgb(70, 127, 145, 170), 135);
-            _centerDisc.Fill = palette.HasCustomBackground
-                ? new LinearGradientBrush(WithAlpha(palette.Center, 242), WithAlpha(palette.Center, 255), 112)
-                : new LinearGradientBrush(Color.FromArgb(150, 34, 43, 57), Color.FromArgb(215, 13, 18, 30), 112);
-            _centerDisc.Fill.Opacity = opacity;
             var sheen = new LinearGradientBrush
             {
                 StartPoint = new Point(0, 0), EndPoint = new Point(1, 1), RelativeTransform = _sheenRotation,
                 Opacity = opacity
             };
-            sheen.GradientStops.Add(new GradientStop(Color.FromArgb(110, 255, 255, 255), 0));
+            sheen.GradientStops.Add(new GradientStop(Color.FromArgb(69, 255, 255, 255), 0));
             sheen.GradientStops.Add(new GradientStop(Color.FromArgb(16, 231, 243, 255), 0.20));
             sheen.GradientStops.Add(new GradientStop(Color.FromArgb(0, 203, 242, 255), 0.43));
             sheen.GradientStops.Add(new GradientStop(Color.FromArgb(0, 203, 242, 255), 0.78));
             sheen.GradientStops.Add(new GradientStop(Color.FromArgb(46, 129, 219, 255), 1));
             _glassSheen.Fill = sheen;
-            _glassSheen.Visibility = Visibility.Visible;
+            _glassSheen.Visibility = _style == MenuStyle.Classic ? Visibility.Visible : Visibility.Collapsed;
         }
         else
         {
-            _disc.Fill = new LinearGradientBrush(palette.Control, palette.Disc, 120) { Opacity = opacity };
-            _disc.Stroke = new SolidColorBrush(palette.Rim);
-            _centerDisc.Fill = new SolidColorBrush(palette.Center) { Opacity = opacity };
             _glassSheen.Visibility = Visibility.Collapsed;
             _glassSheen.Fill = null;
         }
 
-        _dividers.Stroke = new SolidColorBrush(palette.Rim) { Opacity = 0.42 };
+        _disc.Fill = palette.WheelSurface(opacity, glass: _glass);
+        _disc.Stroke = palette.WheelEdge();
+        _centerDisc.Fill = palette.WheelSurface(opacity, center: true, glass: _glass);
+        _centerDisc.Stroke = palette.WheelEdge(center: true);
+        _dividers.Stroke = palette.WheelEdge();
         Color accent = palette.Accent;
         _cursorGlowBrush.GradientStops.Clear();
-        _cursorGlowBrush.GradientStops.Add(new GradientStop(Color.FromArgb(108, accent.R, accent.G, accent.B), 0));
-        _cursorGlowBrush.GradientStops.Add(new GradientStop(Color.FromArgb(52, accent.R, accent.G, accent.B), 0.40));
+        _cursorGlowBrush.GradientStops.Add(new GradientStop(WithAlpha(accent, (byte)(32 * opacity)), 0));
+        _cursorGlowBrush.GradientStops.Add(new GradientStop(WithAlpha(accent, (byte)(15 * opacity)), 0.40));
         _cursorGlowBrush.GradientStops.Add(new GradientStop(Color.FromArgb(0, accent.R, accent.G, accent.B), 1));
-        _highlight.Fill = new SolidColorBrush(_glass && !palette.HasCustomBackground ? Colors.White : palette.Highlight)
-            { Opacity = opacity * (_glass ? 0.17 : 0.85) };
-        _highlight.Stroke = new SolidColorBrush(_glass && !palette.HasCustomColors ? Colors.White : palette.Accent) { Opacity = 0.29 };
-        _highlight.StrokeThickness = 1;
-        _centerDisc.Stroke = new SolidColorBrush(_glass ? Colors.White : palette.Rim) { Opacity = 0.54 };
+        _highlight.Fill = palette.WheelHover(opacity);
+        _highlight.Stroke = new SolidColorBrush(WithAlpha(accent, 175));
+        _highlight.StrokeThickness = 1.2;
+        _highlight.StrokeLineJoin = PenLineJoin.Round;
         bool textChanged = _centerText.Foreground is not SolidColorBrush text || text.Color != palette.Text;
-        _centerText.Foreground = _settingsLabel.Foreground = new SolidColorBrush(palette.Text);
-        _pillNormal = new SolidColorBrush(palette.Control) { Opacity = Math.Max(0.25, opacity * 0.82) };
-        _pillActive = new SolidColorBrush(palette.Selected);
-        _settingsPill.Background = _hoverGear ? _pillActive : _pillNormal;
-        _settingsPill.BorderBrush = new SolidColorBrush(palette.Text) { Opacity = 0.26 };
-        _tileNormal = new SolidColorBrush(_glass ? palette.Center : palette.Control) { Opacity = 0.59 * opacity };
-        _tileBorder = new SolidColorBrush(palette.Text) { Opacity = 0.15 };
+        _centerText.Foreground = new SolidColorBrush(palette.Text);
+        _tileNormal = palette.WheelSurface(.70 * opacity, center: true, glass: _glass);
+        _tileBorder = palette.WheelEdge();
         foreach (var slot in _slots)
         {
-            slot.Tile.Background = _tileNormal;
-            slot.Tile.BorderBrush = _tileBorder;
-            if (textChanged) slot.Icon.Source = IconService.Get(slot.Entry, palette.Text);
+            if (slot.Tile is { } tile)
+            {
+                tile.Background = _tileNormal;
+                tile.BorderBrush = _tileBorder;
+            }
+            if (textChanged) slot.Icon.Source = SlotIcon(slot.Entry, palette.Text);
         }
-        _highlightGlow.Color = _centerGlow.Color = palette.Accent;
-        _disc.Effect = _animationsEnabled && !_glass && opacity > 0 ? _discShadow : null;
-        _highlight.Effect = _animationsEnabled && !_glass ? _highlightGlow : null;
-        _centerDisc.Effect = _animationsEnabled && !_glass ? _centerGlow : null;
+        if (_style != MenuStyle.Classic) ApplyStyledAppearance(palette, opacity);
+        if (!_animationsEnabled) _cursorGlow.Visibility = Visibility.Collapsed;
     }
 
     private static Color WithAlpha(Color color, byte alpha) => Color.FromArgb(alpha, color.R, color.G, color.B);
@@ -545,10 +588,11 @@ public sealed class RadialView : Canvas
         _dots.Children.Clear();
 
         var cfg = ConfigStore.Current;
-        int active = cfg.Modes.IndexOf(CurrentMode);
-        int count = Math.Min(cfg.Modes.Count, 7);
+        var available = cfg.Modes.Where(mode => mode.VisibleItems(cfg.SubmenusEnabled).Any()).ToList();
+        int active = available.IndexOf(CurrentMode);
+        int count = Math.Min(available.Count, _style == MenuStyle.Honeycomb ? 3 : 7);
         if (count <= 1 || active < 0) return;
-        active -= Math.Clamp(active - count / 2, 0, cfg.Modes.Count - count);
+        active -= Math.Clamp(active - count / 2, 0, available.Count - count);
 
         const double dot = 5;
         const double gap = 6;
@@ -569,11 +613,21 @@ public sealed class RadialView : Canvas
 
     private void UpdateCenterText()
     {
-        _settingsLabel.Text = _submenu == null ? "Настройки" : "Назад";
-        _centerText.Text = (_hover >= 0 && _hover < _slots.Count)
-            ? _slots[_hover].Entry.Name
-            : CurrentMode.Name;
+        var entry = _hover >= 0 && _hover < _slots.Count ? _slots[_hover].Entry : null;
+        bool settings = ReferenceEquals(entry, SettingsEntry);
+        double size = _style != MenuStyle.Honeycomb ? 13 : _centerHost.Width < 65 ? 9.5 : 12;
+        _centerText.FontSize = settings ? Math.Min(size, 10.5) : size;
+        _centerText.LineHeight = _centerText.FontSize * 1.23;
+        string caption = _statusHover is { } metric ? _statusRing.Caption(metric) :
+            settings ? "Настройки\nкругового\nменю" : entry?.Name ?? CurrentMode.Name;
+        if (_centerText.Text != caption) _centerText.Text = caption;
+        bool neutral = entry == null && !_statusHover.HasValue;
+        _centerText.MaxHeight = _centerText.LineHeight * (neutral ? 2 : 3);
+        _dots.Visibility = neutral ? Visibility.Visible : Visibility.Hidden;
     }
+
+    private static ImageSource SlotIcon(Entry entry, Color color) =>
+        ReferenceEquals(entry, SettingsEntry) ? SettingsIcon.Value : IconService.Get(entry, color);
 
     // =====================================================================
     //  Мышь
@@ -581,10 +635,10 @@ public sealed class RadialView : Canvas
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
     {
         base.OnMouseLeftButtonDown(e);
-        if (!IsPreview || !_open || _slots.Count < 2) return;
+        if (!IsPreview || !_open || _slots.Count < 3) return;
 
         int index = PreviewSectorAt(e.GetPosition(this));
-        if (index < 0 || !CaptureMouse()) return;
+        if (index <= 0 || !CaptureMouse()) return;
 
         _previewDragMode = CurrentMode;
         _previewDragIndex = index;
@@ -613,11 +667,12 @@ public sealed class RadialView : Canvas
                 CloseRequested?.Invoke();
                 return;
             }
-            if (offset.LengthSquared > CursorR * CursorR)
+            double pointerRadius = PointerRadius;
+            if (offset.LengthSquared > pointerRadius * pointerRadius)
             {
                 offset.Normalize();
                 // Оставляем запас для округления координат до целых пикселей.
-                point = center + offset * (CursorR - 1 / _displayScale);
+                point = center + offset * (pointerRadius - 1 / _displayScale);
                 var screenPoint = PointToScreen(point);
                 SetCursorPos((int)Math.Round(screenPoint.X), (int)Math.Round(screenPoint.Y));
             }
@@ -629,7 +684,7 @@ public sealed class RadialView : Canvas
 
     private bool ShouldEscape(Vector offset)
     {
-        double escapeRadius = CursorR + Math.Max(EscapeMargin, 14 / _displayScale);
+        double escapeRadius = PointerRadius + Math.Max(EscapeMargin, 14 / _displayScale);
         return offset.LengthSquared > escapeRadius * escapeRadius;
     }
 
@@ -644,12 +699,14 @@ public sealed class RadialView : Canvas
     protected override void OnMouseLeave(MouseEventArgs e)
     {
         base.OnMouseLeave(e);
-        SetPointer(-1, false, false);
+        SetStatusHover(null);
+        SetPointer(-1, false);
         _cursorGlow.Visibility = Visibility.Collapsed;
     }
 
     private void MoveCursorGlow(Point point)
     {
+        if (_style != MenuStyle.Classic || !_animationsEnabled) return;
         var offset = point - new Point(C, C);
         if (offset.Length > OuterR)
         {
@@ -665,20 +722,30 @@ public sealed class RadialView : Canvas
     {
         base.OnMouseLeftButtonUp(e);
         if (!_open) return;
-
-        if (IsPreview)
+        var point = e.GetPosition(this);
+        if (!_previewDragging && ClickStatusAt(point))
         {
-            if (_previewDragMode == null) return;
-            FinishPreviewDrag(e.GetPosition(this));
+            if (_previewDragMode != null) CancelPreviewDrag();
             e.Handled = true;
             return;
         }
 
-        UpdatePointer(e.GetPosition(this));
+        if (IsPreview)
+        {
+            if (!_previewDragging && PreviewSectorAt(point) is >= 0 and var index)
+            {
+                _effects.Burst(SlotCenter(index), Now());
+                StartRendering();
+            }
+            if (_previewDragMode != null) FinishPreviewDrag(point);
+            e.Handled = true;
+            return;
+        }
+
+        UpdatePointer(point);
         if (InvokeSector()) return;
-        if ((_hoverCenter || _hoverGear) && TryGoBack()) return;
+        if (_hoverCenter && TryGoBack()) return;
         if (_hoverCenter) SwitchMode(1);
-        else if (_hoverGear) SettingsRequested?.Invoke();
         else CloseRequested?.Invoke();
     }
 
@@ -687,8 +754,11 @@ public sealed class RadialView : Canvas
         if (!_open || IsPreview) return;
         if (!ShouldEscape(point - new Point(C, C)))
         {
-            UpdatePointer(point);
-            if (InvokeSector()) return;
+            if (!ClickStatusAt(point))
+            {
+                UpdatePointer(point);
+                if (InvokeSector()) return;
+            }
         }
         CloseRequested?.Invoke();
     }
@@ -697,7 +767,12 @@ public sealed class RadialView : Canvas
     {
         if (_hover < 0 || _hover >= _slots.Count) return false;
         var entry = _slots[_hover].Entry;
-        if (entry.Submenu is { } submenu)
+        _effects.Burst(SlotCenter(_hover), Now());
+        if (ReferenceEquals(entry, SettingsEntry))
+        {
+            SettingsRequested?.Invoke();
+        }
+        else if (entry.Submenu is { } submenu)
         {
             if (!ConfigStore.Current.SubmenusEnabled) return false;
             _submenu = submenu;
@@ -717,6 +792,7 @@ public sealed class RadialView : Canvas
 
     private void UpdatePreviewDrag(MouseEventArgs e, Point point)
     {
+        SetStatusHover(null);
         if (!_previewDragging)
         {
             var offset = e.GetPosition(Window.GetWindow(this)) - _previewDragStart;
@@ -729,10 +805,10 @@ public sealed class RadialView : Canvas
         }
 
         int target = PreviewSectorAt(point);
-        _dragIcon.Visibility = target >= 0 ? Visibility.Visible : Visibility.Collapsed;
+        _dragIcon.Visibility = target > 0 ? Visibility.Visible : Visibility.Collapsed;
         Canvas.SetLeft(_dragIcon, point.X - _dragIcon.Width / 2);
         Canvas.SetTop(_dragIcon, point.Y - _dragIcon.Height / 2);
-        SetPointer(target, false, false);
+        SetPointer(target > 0 ? target : -1, false, target > 0 ? point : null);
         e.Handled = true;
     }
 
@@ -744,7 +820,7 @@ public sealed class RadialView : Canvas
         _dragIcon.Visibility = Visibility.Collapsed;
         _dragIcon.Source = null;
         if (IsMouseCaptured) ReleaseMouseCapture();
-        SetPointer(-1, false, false);
+        SetPointer(-1, false);
     }
 
     private void FinishPreviewDrag(Point point)
@@ -753,7 +829,7 @@ public sealed class RadialView : Canvas
         int from = _previewDragIndex;
         int target = _previewDragging ? PreviewSectorAt(point) : -1;
         CancelPreviewDrag();
-        if (target >= 0 && target != from)
+        if (target > 0 && target != from)
         {
             int sourceIndex = mode.Items.IndexOf(_slots[from].Entry);
             int targetIndex = mode.Items.IndexOf(_slots[target].Entry);
@@ -764,6 +840,7 @@ public sealed class RadialView : Canvas
 
     private int PreviewSectorAt(Point point)
     {
+        if (_style != MenuStyle.Classic) return StyledSlotAt(point);
         Vector offset = point - new Point(C, C);
         return offset.LengthSquared <= InnerR * InnerR || offset.LengthSquared > OuterR * OuterR
             ? -1 : SectorAt(offset.X, offset.Y);
@@ -778,27 +855,40 @@ public sealed class RadialView : Canvas
         return (int)Math.Floor((angle + span / 2) / span) % _slots.Count;
     }
 
+    private Point SlotCenter(int index) => _slots[index].Style?.Center ??
+        P(IconR, 2 * Math.PI * index / _slots.Count);
+
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
         base.OnMouseWheel(e);
+        if (_open && _statusRing.At(e.GetPosition(this)) == StatusArc.Timer)
+        {
+            StatusRingMonitor.Instance.ChangeDuration(e.Delta);
+            UpdateStatusRing();
+            e.Handled = true;
+            return;
+        }
         SwitchMode(e.Delta > 0 ? -1 : 1);
     }
 
     private void UpdatePointer(Point p)
     {
+        if (!_open || HighlightStatusAt(p)) return;
+        if (_style != MenuStyle.Classic)
+        {
+            bool centerHit = IsStyledCenter(p);
+            SetPointer(centerHit ? -1 : StyledSlotAt(p), centerHit, p);
+            return;
+        }
+
         double dx = p.X - C;
         double dy = p.Y - C;
         double dist = Math.Sqrt(dx * dx + dy * dy);
 
         int idx = -1;
         bool center = false;
-        bool gear = false;
 
-        if (SettingsArea.Contains(p))
-        {
-            gear = true;
-        }
-        else if (dist <= InnerR)
+        if (dist <= InnerR)
         {
             center = true;
         }
@@ -807,23 +897,24 @@ public sealed class RadialView : Canvas
             idx = SectorAt(dx, dy);
         }
 
-        SetPointer(idx, center, gear);
+        SetPointer(idx, center);
     }
 
-    private void SetPointer(int idx, bool center, bool gear)
+    private void SetPointer(int idx, bool center, Point? point = null)
     {
         if (!_open) return;
-        if (idx == _hover && center == _hoverCenter && gear == _hoverGear) return;
+        bool classic = _style == MenuStyle.Classic;
+        bool proximityChanged = !classic && UpdateStyledHoverTargets(ref idx, center ? null : point);
+        if (!proximityChanged && idx == _hover && center == _hoverCenter) return;
 
         if (idx != _hover)
         {
-            if (_hover >= 0 && _hover < _slots.Count) _slots[_hover].HoverTarget = 0;
+            if (classic && _hover >= 0 && _hover < _slots.Count) _slots[_hover].HoverTarget = 0;
             _hover = idx;
 
-            if (idx >= 0)
+            if (idx >= 0 && classic)
             {
                 _slots[idx].HoverTarget = 1;
-
                 // подсветка едет по кратчайшему пути
                 double span = 2 * Math.PI / _slots.Count;
                 _hlTarget += Math.IEEERemainder(idx * span - _hlTarget, 2 * Math.PI);
@@ -839,34 +930,33 @@ public sealed class RadialView : Canvas
                 _hlTargetOpacity = 0;
             }
 
-            UpdateCenterText();
         }
 
         _hoverCenter = center;
-        _hoverGear = gear;
-        Cursor = (idx >= 0 || center || gear) ? Cursors.Hand : Cursors.Arrow;
+        UpdateCenterText();
+        Cursor = (idx >= 0 || center) ? Cursors.Hand : Cursors.Arrow;
         StartRendering();
     }
 
     // =====================================================================
-    //  Анимация: пружины считаем каждый кадр
+    //  Открытие, подсветка и телеметрия используют общий кадровый цикл.
     // =====================================================================
     private void StartRendering()
     {
-        if (!_animationsEnabled)
+        if (!_animationsEnabled || IsPreview && !IsVisible)
         {
             StopRendering();
             _menuT = _open ? 1 : 0;
             _menuV = _hlVel = 0;
             _hlAngle = _hlTarget;
             _hlOpacity = _hlTargetOpacity;
-            _gearHover = _hoverGear ? 1 : 0;
             foreach (var slot in _slots)
             {
-                slot.T = _menuT;
-                slot.V = 0;
+                slot.Phase = slot.FromPhase = slot.T = slot.IconT = _menuT;
                 slot.Hover = slot.HoverTarget;
             }
+            _outgoing.Children.Clear();
+            _statusRing.Advance(0, animate: false);
             ApplyVisuals();
             if (!_open) CloseFinished?.Invoke();
             return;
@@ -888,76 +978,78 @@ public sealed class RadialView : Canvas
     private void OnRendering(object? sender, EventArgs e)
     {
         double now = Now();
-        double dt = Math.Min(now - _last, 1.0 / 30.0);
+        double dt = now - _last;
         _last = now;
         if (dt <= 0) return;
 
-        bool busy = false;
-
-        // общее появление меню
-        double menuTarget = _open ? 1 : 0;
-        _menuV += (SpringK * (menuTarget - _menuT) - SpringDamp * _menuV) * dt;
-        _menuT += _menuV * dt;
-        if (Math.Abs(menuTarget - _menuT) > 0.0015 || Math.Abs(_menuV) > 0.01) busy = true;
-
-        // значки
+        if (double.IsNaN(_transitionStart)) _transitionStart = now;
+        double elapsed = now - _transitionStart;
+        bool burst = _effects.Tick(now);
+        bool busy = SpringTo(ref _menuT, ref _menuV, _open ? 1 : 0, _open ? 29 : 24, dt);
+        if (_outgoing.Children.Count > 0)
+        {
+            if (double.IsNaN(_fadeStart)) _fadeStart = now;
+            double remaining = Math.Max(0, 1 - (now - _fadeStart) / .14);
+            _outgoing.Opacity = remaining * remaining;
+            if (remaining == 0) _outgoing.Children.Clear();
+            else busy = true;
+        }
+        if (_open) busy |= _statusRing.Advance(dt, animate: true);
+        double blend = 1 - Math.Exp(-dt * 28);
         foreach (var s in _slots)
         {
-            double target = (_open && now - _changedAt >= s.Delay) ? 1 : 0;
-            s.V += (SpringK * (target - s.T) - SpringDamp * s.V) * dt;
-            s.T += s.V * dt;
-            s.Hover += (s.HoverTarget - s.Hover) * Math.Min(1, dt * 16);
-
-            if (Math.Abs(target - s.T) > 0.0015 ||
-                Math.Abs(s.V) > 0.01 ||
-                Math.Abs(s.HoverTarget - s.Hover) > 0.002)
-            {
-                busy = true;
-            }
-            if (_open && target == 0) busy = true;   // ждём своей очереди
+            s.Hover += (s.HoverTarget - s.Hover) * blend;
+            if (Math.Abs(s.HoverTarget - s.Hover) > 0.002) busy = true;
+            else s.Hover = s.HoverTarget;
+            busy |= UpdateSlotMotion(s, elapsed);
         }
 
-        // скользящая подсветка
-        _hlVel += (SlideK * (_hlTarget - _hlAngle) - SlideDamp * _hlVel) * dt;
-        _hlAngle += _hlVel * dt;
-        _hlOpacity += (_hlTargetOpacity - _hlOpacity) * Math.Min(1, dt * 18);
-        if (Math.Abs(_hlTarget - _hlAngle) > 0.001 ||
-            Math.Abs(_hlVel) > 0.01 ||
-            Math.Abs(_hlTargetOpacity - _hlOpacity) > 0.01)
-        {
-            busy = true;
-        }
-
-        // шестерёнка
-        double gearTarget = _hoverGear ? 1 : 0;
-        _gearHover += (gearTarget - _gearHover) * Math.Min(1, dt * 16);
-        if (Math.Abs(gearTarget - _gearHover) > 0.01) busy = true;
+        busy |= SpringTo(ref _hlAngle, ref _hlVel, _hlTarget, 34, dt);
+        _hlOpacity += (_hlTargetOpacity - _hlOpacity) * blend;
+        if (Math.Abs(_hlTargetOpacity - _hlOpacity) > .006) busy = true;
+        else _hlOpacity = _hlTargetOpacity;
 
         ApplyVisuals();
 
-        if (!busy)
+        if (!busy && !burst)
         {
             StopRendering();
             if (!_open) CloseFinished?.Invoke();
         }
     }
 
+    private static bool SpringTo(ref double value, ref double velocity, double target, double smoothness, double dt)
+    {
+        double offset = value - target;
+        double slope = velocity + offset * smoothness;
+        double decay = Math.Exp(-smoothness * dt);
+        offset = (offset + slope * dt) * decay;
+        velocity = (velocity - smoothness * slope * dt) * decay;
+        value = target + offset;
+        if (Math.Abs(offset) > .005 || Math.Abs(velocity) > .12) return true;
+        value = target;
+        velocity = 0;
+        return false;
+    }
+
     private void ApplyVisuals()
     {
         int n = _slots.Count;
+        double progress = Math.Clamp(_menuT, 0, 1);
+        double scale = .91 + .09 * progress;
+        _menuScale.ScaleX = _menuScale.ScaleY = scale;
+        _menu.Opacity = Math.Min(1, progress * 1.12);
 
-        // появление: лёгкое увеличение и проявление
-        double m = Math.Clamp(_menuT, 0, 1.2);
-        double sc = 0.84 + 0.16 * m;
-        double stretch = _glass && _animationsEnabled ? Math.Clamp(_menuV * 0.006, -0.045, 0.045) : 0;
-        _menuScale.ScaleX = sc + stretch;
-        _menuScale.ScaleY = sc - stretch;
-        double alpha = Math.Clamp(_menuT * 1.8, 0, 1);
-        _menu.Opacity = alpha;
-        _settingsPill.Background = _gearHover > 0.3 ? _pillActive : _pillNormal;
+        if (_style != MenuStyle.Classic)
+        {
+            foreach (var slot in _slots) ApplyStyledVisuals(slot);
+            _highlight.Visibility = Visibility.Collapsed;
+            return;
+        }
+
         if (_glass)
             _sheenRotation.Angle = _animationsEnabled
-                ? (1 - m) * -35 + Math.Sin(_hlAngle) * 24 * _hlOpacity : 0;
+                ? (1 - progress) * -19 + Math.Sin(_hlAngle) * 8 * _hlOpacity : 0;
 
         // значки
         double span = n > 0 ? 2 * Math.PI / n : 0;
@@ -965,16 +1057,16 @@ public sealed class RadialView : Canvas
         {
             var s = _slots[i];
             double a = i * span;
-            double dist = IconR * (0.55 + 0.45 * Math.Max(0, s.T));
+            double dist = IconR * (.65 + .35 * s.T);
             double x = C + Math.Sin(a) * dist;
             double y = C - Math.Cos(a) * dist;
 
-            double k = (0.5 + 0.5 * Math.Clamp(s.T, 0, 1)) * (1 + 0.14 * s.Hover);
+            double k = (.64 + .36 * s.T) * (1 + (_animationsEnabled ? IconHoverScale * s.Hover : 0));
             s.Scale.ScaleX = k;
             s.Scale.ScaleY = k;
-            s.Holder.Opacity = Math.Clamp((s.T - 0.1) / 0.5, 0, 1);
-            Canvas.SetLeft(s.Holder, x - IconBox / 2);
-            Canvas.SetTop(s.Holder, y - IconBox / 2);
+            s.Holder.Opacity = s.IconT;
+            s.Offset.X = x - C;
+            s.Offset.Y = y - C;
         }
 
         // подсветка

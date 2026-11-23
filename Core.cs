@@ -85,6 +85,28 @@ public sealed class Mode : Notifier
     }
 
     public ObservableCollection<Entry> Items { get; set; } = new();
+
+    internal IEnumerable<Entry> VisibleItems(bool submenusEnabled) =>
+        Items.Where(entry => entry.Submenu == null ||
+            (submenusEnabled && entry.Submenu.VisibleItems(true).Any()));
+}
+
+public enum MenuStyle { Classic, Circles, Honeycomb, Ring }
+
+[Flags]
+public enum StatusMetrics
+{
+    None = 0,
+    Cpu = 1,
+    Audio = 2,
+    Battery = 4,
+    Timer = 8,
+    Gpu = 16,
+    Memory = 32,
+    Disk = 64,
+    Network = 128,
+    Default = Cpu | Audio | Battery | Timer,
+    All = Default | Gpu | Memory | Disk | Network
 }
 
 public sealed class AppConfig
@@ -112,9 +134,34 @@ public sealed class AppConfig
         }
     }
     public MenuTheme Theme { get; set; } = MenuTheme.Violet;
+    public MenuStyle MenuStyle { get; set; }
     public string CustomColor { get; set; } = "#A855F7";
     public Dictionary<MenuTheme, ThemeColors> ThemeOverrides { get; set; } = new();
     public bool AnimationsEnabled { get; set; } = true;
+    public bool SettingsPreviewVisible { get; set; } = true;
+    public bool SelectionEffectsEnabled { get; set; } = true;
+    public bool StatusRingEnabled { get; set; } = true;
+    public StatusMetrics VisibleStatusMetrics { get; set; } = StatusMetrics.Default;
+    public bool HideWidgetsInGames { get; set; }
+    public bool CompactWidgetsInGames { get; set; } = true;
+    public HashSet<string> CompactDesktopWidgets { get; set; } = new();
+    public Dictionary<string, WidgetPlacement> WidgetPlacements { get; set; } = new();
+    public HashSet<string> WidgetsWithoutDetail { get; set; } = new();
+    internal bool IsModeAvailable(int index) =>
+        index >= 0 && index < Modes.Count && Modes[index].VisibleItems(SubmenusEnabled).Any();
+
+    internal int AvailableModeIndex(int start, int direction)
+    {
+        int count = Modes.Count;
+        if (count == 0) return -1;
+        int index = Math.Clamp(start, 0, count - 1);
+        for (int i = 0; i < count; i++)
+        {
+            if (IsModeAvailable(index)) return index;
+            index = (index + direction + count) % count;
+        }
+        return -1;
+    }
     private int _transparencyPercent;
     public int TransparencyPercent
     {
@@ -190,6 +237,10 @@ public static class ConfigStore
                 if (cfg != null && cfg.Modes.Count > 0)
                 {
                     cfg.ActiveMode = Math.Clamp(cfg.ActiveMode, 0, cfg.Modes.Count - 1);
+                    if (!Enum.IsDefined(cfg.MenuStyle)) cfg.MenuStyle = MenuStyle.Classic;
+                    cfg.WidgetPlacements ??= new();
+                    cfg.WidgetsWithoutDetail ??= new();
+                    cfg.CompactDesktopWidgets ??= new();
                     _current = cfg;
                     return;
                 }

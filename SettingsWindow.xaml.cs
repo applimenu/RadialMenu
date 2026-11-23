@@ -2,6 +2,7 @@ using System.IO;
 using System.Globalization;
 using System.Security;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
@@ -43,12 +44,19 @@ public partial class SettingsWindow : Window
         _registerHotkey = registerHotkey;
         _hotkeyAvailable = hotkeyAvailable;
         InitializeComponent();
+        MinWidth = Math.Min(MinWidth, SystemParameters.WorkArea.Width);
+        MinHeight = Math.Min(MinHeight, SystemParameters.WorkArea.Height);
         SettingsTheme.PreventMaximize(this);
-        if (Cfg.AnimationsEnabled) WindowSurface.Opacity = 0;
+        if (MotionEnabled) WindowSurface.Opacity = 0;
+        SizeChanged += (_, _) => ArrangePreview();
+        ArrangePreview();
         Loaded += (_, _) => UpdateTabIndicator(animate: false);
         _appearanceSave.Tick += (s, e) => SaveAppearance();
         Closed += (s, e) =>
         {
+            ScreenRecording.Changed -= RefreshRecordingControls;
+            StatusWidgets.PinsChanged -= RefreshDesktopWidget;
+            ChameleonMonitor.PaletteSettled -= ChameleonPaletteSettled;
             if (_appearanceSave.IsEnabled) SaveAppearance();
             _serviceLifetime.Cancel();
             _serviceLifetime.Dispose();
@@ -56,6 +64,7 @@ public partial class SettingsWindow : Window
 
         // предпросмотр всегда показывает режим, выбранный в списке слева
         Preview.ModeSource = () => SelMode;
+        Preview.StatusWidgetRequested += StatusWidgets.Show;
         Preview.EntryMoveRequested += MoveEntry;
         Preview.SetMenuScale(Cfg.MenuScalePercent);
         MenuScale.Minimum = AppConfig.MinMenuScale;
@@ -75,6 +84,19 @@ public partial class SettingsWindow : Window
         AnimationsToggle.IsChecked = Cfg.AnimationsEnabled;
         AnimationsToggle.Checked += AnimationsToggle_Changed;
         AnimationsToggle.Unchecked += AnimationsToggle_Changed;
+        SelectionEffectsToggle.IsChecked = Cfg.SelectionEffectsEnabled;
+        SelectionEffectsToggle.IsEnabled = Cfg.AnimationsEnabled;
+        SelectionEffectsToggle.Click += SelectionEffectsToggle_Click;
+        StatusRingToggle.IsChecked = Cfg.StatusRingEnabled;
+        StatusRingToggle.Click += StatusRingToggle_Click;
+        StatusMetricChoices.IsEnabled = Cfg.StatusRingEnabled;
+        foreach (var box in StatusMetricChoices.Children.OfType<CheckBox>())
+            if (box.Tag is StatusMetrics metric) box.IsChecked = (Cfg.VisibleStatusMetrics & metric) != 0;
+        HideWidgetsInGamesToggle.IsChecked = Cfg.HideWidgetsInGames;
+        CompactWidgetsInGamesToggle.IsChecked = Cfg.CompactWidgetsInGames;
+        DesktopWidgetChoice.ItemsSource = Enum.GetValues<StatusArc>().ToDictionary(m => m, MetricWidget.TitleFor);
+        DesktopWidgetChoice.SelectedValue = StatusArc.Cpu;
+        StatusWidgets.PinsChanged += RefreshDesktopWidget;
         ReleaseSelectionToggle.IsChecked = Cfg.SelectOnRelease;
         SubmenusToggle.IsChecked = Cfg.SubmenusEnabled;
         GamePauseToggle.IsChecked = Cfg.PauseInGames;
@@ -93,6 +115,7 @@ public partial class SettingsWindow : Window
         ModeList.ItemsSource = Cfg.Modes;
         ModeList.SelectedIndex = Math.Clamp(Cfg.ActiveMode, 0, Cfg.Modes.Count - 1);
 
+        MenuStyleList.SelectedValue = Cfg.MenuStyle;
         ThemeList.ItemsSource = ThemeOptions();
         ColorTarget.SelectionChanged += (s, e) =>
         {
@@ -102,6 +125,7 @@ public partial class SettingsWindow : Window
         ThemeColorWheel.SelectionChanged += ColorWheelChanged;
         ColorBrightness.ValueChanged += (s, e) => ColorWheelChanged();
         ThemeList.SelectedValue = Enum.IsDefined(Cfg.Theme) ? Cfg.Theme : MenuTheme.Violet;
+        ChameleonMonitor.PaletteSettled += ChameleonPaletteSettled;
         WindowsStartupStatus.Text = StartupDescription;
         try { WindowsStartupToggle.IsChecked = WindowsStartup.IsRegistered(); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
@@ -110,6 +134,8 @@ public partial class SettingsWindow : Window
             WindowsStartupStatus.Text = "Не удалось прочитать настройку автозапуска Windows.";
         }
         UpdateStatus.Text = $"Установлена версия {ReleaseUpdater.DisplayVersion}.";
+        ScreenRecording.Changed += RefreshRecordingControls;
+        RefreshRecordingControls();
         ReportCard.Visibility = ReportDelivery.CanReport ? Visibility.Visible : Visibility.Collapsed;
         if (!ReportDelivery.CanSend) ReportButton.Content = "Открыть бота в Telegram";
     }
@@ -120,7 +146,7 @@ public partial class SettingsWindow : Window
         if (WindowSurface.Opacity != 0) return;
 
         WindowSurface.Opacity = 1;
-        if (!Cfg.AnimationsEnabled) return;
+        if (!MotionEnabled) return;
 
         var duration = TimeSpan.FromMilliseconds(240);
         var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
@@ -137,12 +163,89 @@ public partial class SettingsWindow : Window
             DragMove();
     }
 
+    private static bool MotionEnabled => Cfg.AnimationsEnabled && SystemParameters.ClientAreaAnimation;
+
+    private void PreviewToggle_Click(object sender, RoutedEventArgs e)
+    {
+        Cfg.SettingsPreviewVisible = !Cfg.SettingsPreviewVisible;
+        ArrangePreview();
+        ConfigStore.Save();
+    }
+
+    private void ArrangePreview()
+    {
+        double width = ActualWidth > 0 ? ActualWidth : Width;
+        double height = ActualHeight > 0 ? ActualHeight : Height;
+        bool below = width < 965;
+        bool show = Cfg.SettingsPreviewVisible;
+        PreviewPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        PreviewToggleLabel.Text = show ? "Скрыть просмотр" : "Предпросмотр";
+        AutomationProperties.SetName(PreviewToggle, show ? "Скрыть предпросмотр" : "Показать предпросмотр");
+        PreviewColumn.Width = new GridLength(show && !below ? Math.Clamp(width * .285, 272, 360) : 0);
+        PreviewGutter.Width = new GridLength(show && !below ? 14 : 0);
+        BottomPreviewRow.Height = new GridLength(show && below ? Math.Clamp(height * .36, 164, 240) : 0);
+        Grid.SetRow(PreviewPanel, below ? 2 : 1);
+        Grid.SetColumn(PreviewPanel, below ? 0 : 2);
+        Grid.SetColumnSpan(PreviewPanel, below ? 3 : 1);
+        PreviewPanel.Margin = below ? new Thickness(0, 8, 0, 0) : new Thickness();
+        PreviewPanel.Padding = below ? new Thickness(15, 8, 9, 8) : new Thickness(15, 13, 15, 13);
+        WheelColumn.Width = below ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+        Grid.SetColumn(WheelStage, below ? 1 : 0);
+        Grid.SetRow(WheelStage, below ? 0 : 1);
+        Grid.SetRowSpan(WheelStage, below ? 3 : 1);
+        Grid.SetRow(PreviewHint, below ? 1 : 2);
+        PreviewHint.Margin = below ? new Thickness(1, 0, 16, 0) : new Thickness(1, 10, 1, 0);
+    }
+
+    internal void ShowWidgetSettings(StatusArc? metric)
+    {
+        SettingsTabs.SelectedItem = WidgetsTab;
+        if (metric.HasValue) DesktopWidgetChoice.SelectedValue = metric.Value;
+        Dispatcher.InvokeAsync(() =>
+        {
+            WidgetSettingsHeading.BringIntoView();
+            if (metric.HasValue) DesktopWidgetDetail.Focus();
+            else DesktopWidgetChoice.Focus();
+        }, DispatcherPriority.Loaded);
+    }
+
+    private void DesktopWidgetChanged(object sender, SelectionChangedEventArgs e) => RefreshDesktopWidget();
+
+    private void RefreshDesktopWidget()
+    {
+        if (DesktopWidgetChoice.SelectedValue is not StatusArc metric) return;
+        PinDesktopWidget.IsChecked = StatusWidgets.IsPinned(metric);
+        DesktopWidgetDetail.IsChecked = !Cfg.WidgetsWithoutDetail.Contains(metric.ToString());
+    }
+
+    private void PinDesktopWidget_Click(object sender, RoutedEventArgs e)
+    {
+        if (DesktopWidgetChoice.SelectedValue is not StatusArc metric) return;
+        StatusWidgets.SetPinned(metric, PinDesktopWidget.IsChecked == true);
+        RefreshDesktopWidget();
+    }
+
+    private void DesktopWidgetDetail_Click(object sender, RoutedEventArgs e)
+    {
+        if (DesktopWidgetChoice.SelectedValue is StatusArc metric)
+            StatusWidgets.SetDetailVisible(metric, DesktopWidgetDetail.IsChecked == true);
+    }
+
     private void CloseSettings_Click(object sender, RoutedEventArgs e) => Close();
 
     private void SettingsTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (IsLoaded && e.Source == SettingsTabs)
-            Dispatcher.InvokeAsync(() => UpdateTabIndicator(animate: true), DispatcherPriority.Loaded);
+        if (!IsLoaded || e.Source != SettingsTabs) return;
+        UpdateTabIndicator(animate: true);
+        if (!MotionEnabled || SettingsTabs.Template.FindName("PART_SelectedContentHost", SettingsTabs)
+            is not ContentPresenter content) return;
+        var duration = TimeSpan.FromMilliseconds(155);
+        var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
+        content.BeginAnimation(OpacityProperty, new DoubleAnimation(.72, 1, duration)
+            { EasingFunction = ease, FillBehavior = FillBehavior.Stop });
+        if (content.RenderTransform.IsFrozen) content.RenderTransform = new TranslateTransform();
+        content.RenderTransform.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(5, 0, duration)
+            { EasingFunction = ease, FillBehavior = FillBehavior.Stop });
     }
 
     private void SettingsTabs_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -165,25 +268,24 @@ public partial class SettingsWindow : Window
             return;
         }
 
-        animate &= Cfg.AnimationsEnabled;
+        animate &= MotionEnabled;
         if (animate && (Rect)geometry.GetAnimationBaseValue(RectangleGeometry.RectProperty) == target) return;
 
         var current = geometry.Rect;
         geometry.BeginAnimation(RectangleGeometry.RectProperty, null);
         geometry.Rect = target;
-        if (!animate || Math.Abs(current.Y - target.Y) > 1 || current == target) return;
+        if (!animate || Math.Abs(current.X - target.X) > 1 || current == target) return;
 
-        // Move the leading edge first, then let the trailing edge catch up.
-        bool movingRight = target.Left > current.Left;
-        double left = current.Left + (target.Left - current.Left) * (movingRight ? 0.23 : 0.80);
-        double right = current.Right + (target.Right - current.Right) * (movingRight ? 0.80 : 0.23);
-        var stretch = new Rect(left, target.Y, Math.Max(1, right - left), target.Height);
+        bool movingDown = target.Top > current.Top;
+        double top = current.Top + (target.Top - current.Top) * (movingDown ? 0.36 : 0.70);
+        double bottom = current.Bottom + (target.Bottom - current.Bottom) * (movingDown ? 0.70 : 0.36);
+        var stretch = new Rect(target.X, top, target.Width, Math.Max(1, bottom - top));
 
         var slide = new RectAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
         slide.KeyFrames.Add(new DiscreteRectKeyFrame(current, KeyTime.FromTimeSpan(TimeSpan.Zero)));
-        slide.KeyFrames.Add(new SplineRectKeyFrame(stretch, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(125)),
+        slide.KeyFrames.Add(new SplineRectKeyFrame(stretch, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(95)),
             new KeySpline(0.24, 0.10, 0.42, 0.88)));
-        slide.KeyFrames.Add(new SplineRectKeyFrame(target, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(300)),
+        slide.KeyFrames.Add(new SplineRectKeyFrame(target, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(220)),
             new KeySpline(0.18, 0.48, 0.36, 1)));
         geometry.BeginAnimation(RectangleGeometry.RectProperty, slide);
     }
@@ -317,6 +419,8 @@ public partial class SettingsWindow : Window
             UpdateStatus.Text = status + " · установка…";
             await Dispatcher.Yield(DispatcherPriority.Background);
             cancellation.ThrowIfCancellationRequested();
+            await ScreenRecording.StopAsync();
+            cancellation.ThrowIfCancellationRequested();
             installer.Start(release.Version, MenuPalette.From(Cfg), Cfg.AnimationsEnabled);
             Application.Current.Shutdown();
         }
@@ -437,10 +541,53 @@ public partial class SettingsWindow : Window
     private void AnimationsToggle_Changed(object sender, RoutedEventArgs e)
     {
         Cfg.AnimationsEnabled = AnimationsToggle.IsChecked == true;
+        SelectionEffectsToggle.IsEnabled = Cfg.AnimationsEnabled;
         if (!Cfg.AnimationsEnabled) UpdateTabIndicator(animate: false);
         Preview.RefreshAppearance();
         QueueAppearanceSave();
     }
+
+    private void SelectionEffectsToggle_Click(object sender, RoutedEventArgs e)
+    {
+        Cfg.SelectionEffectsEnabled = SelectionEffectsToggle.IsChecked == true;
+        Preview.RefreshAppearance();
+        QueueAppearanceSave();
+    }
+
+    private void StatusRingToggle_Click(object sender, RoutedEventArgs e)
+    {
+        Cfg.StatusRingEnabled = StatusRingToggle.IsChecked == true;
+        StatusMetricChoices.IsEnabled = Cfg.StatusRingEnabled;
+        Preview.RefreshAppearance();
+        QueueAppearanceSave();
+    }
+
+    private void StatusMetric_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not CheckBox { Tag: StatusMetrics metric } check) return;
+        if (check.IsChecked == true) Cfg.VisibleStatusMetrics |= metric;
+        else Cfg.VisibleStatusMetrics &= ~metric;
+        Preview.RefreshAppearance();
+        QueueAppearanceSave();
+    }
+
+    private void WidgetGameOptions_Click(object sender, RoutedEventArgs e)
+    {
+        Cfg.HideWidgetsInGames = HideWidgetsInGamesToggle.IsChecked == true;
+        Cfg.CompactWidgetsInGames = CompactWidgetsInGamesToggle.IsChecked == true;
+        ConfigStore.Commit();
+    }
+
+    private void RefreshRecordingControls()
+    {
+        RecordScreenButton.Content = ScreenRecording.IsRecording ? "● Остановить запись" : "Начать запись";
+        RecordScreenButton.IsEnabled = !ScreenRecording.IsBusy;
+        RecordingStatus.Text = ScreenRecording.StatusText;
+    }
+
+    private async void RecordScreen_Click(object sender, RoutedEventArgs e) => await ScreenRecording.ToggleAsync();
+
+    private void OpenRecordings_Click(object sender, RoutedEventArgs e) => ScreenRecording.OpenFolder();
 
     private void QueueAppearanceSave()
     {
@@ -462,7 +609,8 @@ public partial class SettingsWindow : Window
         CreateThemeOption(MenuTheme.Ocean),
         CreateThemeOption(MenuTheme.Forest),
         CreateThemeOption(MenuTheme.Glass),
-        CreateThemeOption(MenuTheme.Custom)
+        CreateThemeOption(MenuTheme.Custom),
+        CreateThemeOption(MenuTheme.Chameleon)
     ];
 
     private static ThemeOption CreateThemeOption(MenuTheme theme)
@@ -471,19 +619,41 @@ public partial class SettingsWindow : Window
         return new(theme, MenuPalette.DisplayName(theme), new SolidColorBrush(palette.Disc), new SolidColorBrush(palette.Accent));
     }
 
+    private void MenuStyleList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (MenuStyleList.SelectedValue is not MenuStyle style || Cfg.MenuStyle == style) return;
+        Cfg.MenuStyle = style;
+        ConfigStore.Commit();
+    }
+
     private void ThemeList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (ThemeList.SelectedValue is not MenuTheme theme) return;
 
         bool changed = Cfg.Theme != theme;
         Cfg.Theme = theme;
+        bool automatic = theme == MenuTheme.Chameleon;
+        AutoColorCard.Visibility = automatic ? Visibility.Visible : Visibility.Collapsed;
+        ManualColorCard.Visibility = automatic ? Visibility.Collapsed : Visibility.Visible;
         ApplyTheme();
-        SynchronizeColorEditor();
+        if (!automatic) SynchronizeColorEditor();
         Preview.RefreshAppearance();
         if (changed) ConfigStore.Commit();
     }
 
     private bool EditingBackground => ColorTarget.SelectedIndex == 0;
+
+    private void ChameleonPaletteSettled()
+    {
+        if (Cfg.Theme != MenuTheme.Chameleon) return;
+        var palette = MenuPalette.From(Cfg);
+        if (ThemeList.SelectedItem is ThemeOption option)
+        {
+            option.Surface.Color = palette.Disc;
+            option.Accent.Color = palette.Accent;
+        }
+        ApplyTheme();
+    }
 
     private void SynchronizeColorEditor()
     {
@@ -495,6 +665,7 @@ public partial class SettingsWindow : Window
 
     private void UpdateThemeColor(string? hex)
     {
+        if (Cfg.Theme == MenuTheme.Chameleon) return;
         var overrides = Cfg.ThemeOverrides ??= new();
         var colors = overrides.GetValueOrDefault(Cfg.Theme) ?? new ThemeColors();
         var updated = EditingBackground ? colors with { Background = hex } : colors with { Accent = hex };
@@ -561,7 +732,29 @@ public partial class SettingsWindow : Window
 
     private static string FormatColor(Color color) => $"#{color.R:X2}{color.G:X2}{color.B:X2}";
 
-    private void ApplyTheme() => SettingsTheme.Apply(Resources, MenuPalette.From(Cfg));
+    private void ApplyTheme()
+    {
+        var palette = MenuPalette.From(Cfg);
+        SettingsTheme.Apply(Resources, palette);
+        bool light = MenuPalette.Contrast(palette.Text, Colors.White) > MenuPalette.Contrast(palette.Text, Colors.Black);
+        var tint = light ? Color.FromRgb(235, 219, 225) : Color.FromRgb(82, 37, 54);
+        var shell = MenuPalette.Blend(palette.Center, tint, .43);
+        var top = MenuPalette.Blend(shell, palette.Accent, .07);
+        Color Lift(double amount) => MenuPalette.Blend(shell, palette.Text, amount);
+        static Color Alpha(Color color, byte alpha) => Color.FromArgb(alpha, color.R, color.G, color.B);
+        static LinearGradientBrush Wash(Color first, Color last)
+        {
+            var brush = new LinearGradientBrush(first, last, 77);
+            brush.Freeze();
+            return brush;
+        }
+        Resources["SettingsGlass"] = Wash(Alpha(top, 249), Alpha(shell, 239));
+        Resources["SettingsEdge"] = new SolidColorBrush(Alpha(palette.Text, 34));
+        Resources["ThemePanel"] = Wash(Lift(.107), Lift(.066));
+        Resources["ThemeControl"] = new SolidColorBrush(Lift(.14));
+        Resources["ThemeSelected"] = new SolidColorBrush(MenuPalette.Blend(Lift(.17), palette.Accent, .095));
+        Resources["PreviewStage"] = Wash(MenuPalette.Blend(shell, palette.Accent, .105), shell);
+    }
 
     private sealed record ThemeOption(MenuTheme Value, string Name, SolidColorBrush Surface, SolidColorBrush Accent);
 
@@ -593,13 +786,17 @@ public partial class SettingsWindow : Window
 
     private void ModeMenu_Opened(object sender, RoutedEventArgs e)
     {
-        if (sender is ContextMenu { PlacementTarget: ListBoxItem { Content: Mode mode } })
+        if (sender is ContextMenu { PlacementTarget: ListBoxItem { Content: Mode mode } } menu)
+        {
             ModeList.SelectedItem = mode;
+            if (menu.Items[0] is MenuItem activate)
+                activate.IsEnabled = Cfg.IsModeAvailable(ModeList.SelectedIndex);
+        }
     }
 
     private void ActivateMode_Click(object sender, RoutedEventArgs e)
     {
-        if (ModeList.SelectedIndex < 0) return;
+        if (!Cfg.IsModeAvailable(ModeList.SelectedIndex)) return;
         Cfg.ActiveMode = ModeList.SelectedIndex;
         ConfigStore.Commit();
     }
@@ -834,9 +1031,9 @@ public partial class SettingsWindow : Window
         ConfigStore.Commit();
     }
 
-    private void Exit_Click(object sender, RoutedEventArgs e)
+    private async void Exit_Click(object sender, RoutedEventArgs e)
     {
-        Application.Current.Shutdown();
+        await App.RequestExitAsync();
     }
 }
 
@@ -928,6 +1125,14 @@ internal sealed class InputDialog : Window
 
     public static void Inform(Window owner, string title, string message) =>
         new InputDialog(owner, title, message, null, "ОК", false).ShowDialog();
+}
+
+internal sealed class SettingsStateManager : VisualStateManager
+{
+    protected override bool GoToStateCore(FrameworkElement control, FrameworkElement root, string name,
+        VisualStateGroup group, VisualState state, bool useTransitions) =>
+        state != null && group != null && base.GoToStateCore(control, root, name, group, state,
+            useTransitions && ConfigStore.Current.AnimationsEnabled && SystemParameters.ClientAreaAnimation);
 }
 
 internal static class SettingsTheme

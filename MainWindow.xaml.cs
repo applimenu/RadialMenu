@@ -20,11 +20,6 @@ public partial class MainWindow : Window
     private bool _mouseSelectOnRelease;
     private int _heldKey;
     private readonly DispatcherTimer _keyRelease = new(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(16) };
-    private readonly DispatcherTimer _glassRefresh = new(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(125) };
-    private (int X, int Y, int Span) _glassSample;
-    private int _glassGeneration;
-    private bool _glassBusy;
-    private bool _captureExcluded;
 
     [DllImport("user32.dll")]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -38,9 +33,6 @@ public partial class MainWindow : Window
     [DllImport("user32.dll")]
     private static extern short GetAsyncKeyState(int key);
 
-    [DllImport("user32.dll")]
-    private static extern bool SetWindowDisplayAffinity(nint window, uint affinity);
-
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT
     {
@@ -52,31 +44,38 @@ public partial class MainWindow : Window
     private bool _openingTelegram;
     private SettingsWindow? _settings;
     private TrayMenu? _tray;
+    private ChameleonMonitor? _chameleon;
 
     public MainWindow()
     {
         _mouseHotkey = new(MouseHotkeyPressed, MouseHotkeyReleased);
         InitializeComponent();
-        _glassRefresh.Tick += RefreshGlass;
         _keyRelease.Tick += CheckKeyRelease;
 
         View.ItemInvoked += entry =>
         {
             string? webAppId = TelegramWebTabs.InstalledAppId(entry.Target);
             if (webAppId != null || TelegramWebTabs.IsWebLink(entry.Target)) CloseMenu(() => OpenTelegram(entry, webAppId));
-            else if (WindowsAppIdentity.BringRunningAppToFront(entry.Target)) CloseMenu();
-            else CloseMenu(() => Launcher.Run(entry));
+            else CloseMenu(() =>
+            {
+                if (!WindowsAppIdentity.BringRunningAppToFront(entry.Target)) Launcher.Run(entry);
+            });
         };
         View.CloseRequested += () => CloseMenu();
         View.SettingsRequested += () => CloseMenu(OpenSettings);
         View.CloseFinished += OnCloseFinished;
+        View.StatusWidgetRequested += metric => CloseMenu(() => StatusWidgets.Show(metric));
 
         SourceInitialized += OnSourceInitialized;
         Loaded += (s, e) =>
         {
             Hide();
+            _chameleon ??= new ChameleonMonitor();
             _tray ??= new TrayMenu(OpenSettings, OpenUpdates, OpenReport, SelectTrayTheme,
-                () => Dispatcher.BeginInvoke(new Action(Application.Current.Shutdown)));
+                () => Dispatcher.BeginInvoke(new Action(async () => await App.RequestExitAsync())));
+            StatusRingMonitor.Instance.TimerFinished -= OnTimerFinished;
+            StatusRingMonitor.Instance.TimerFinished += OnTimerFinished;
+            StatusWidgets.RestorePinned();
             if (!_hasHotkey) OpenSettings();
         };
         Deactivated += (s, e) => { if (View.IsOpen) CloseMenu(); }; // клик в другое место закрывает меню
@@ -194,6 +193,12 @@ public partial class MainWindow : Window
     private void OpenMenu(Point? screenPoint = null)
     {
         if (_afterClose != null) return;
+        var config = ConfigStore.Current;
+        if (config.AvailableModeIndex(config.ActiveMode, 1) < 0)
+        {
+            OpenSettings();
+            return;
+        }
         if (screenPoint == null)
         {
             if (!GetCursorPos(out var cursor)) return;
@@ -205,13 +210,15 @@ public partial class MainWindow : Window
         var dpi = VisualTreeHelper.GetDpi(this);
         Left = p.X / dpi.DpiScaleX - Width / 2;
         Top = p.Y / dpi.DpiScaleY - Height / 2;
+        if (!IsVisible)
+            View.PrepareStatusBackground(p, size / RadialView.ViewSize * dpi.DpiScaleX, size / RadialView.ViewSize * dpi.DpiScaleY);
 
-        bool glass = ConfigStore.Current is { Theme: MenuTheme.Glass, AnimationsEnabled: true, TransparencyPercent: < 100 };
-        if (glass)
+        bool glass = config is { Theme: MenuTheme.Glass, TransparencyPercent: < 100 };
+        if (glass && !IsVisible)
         {
-            _glassSample = ((int)p.X, (int)p.Y, (int)Math.Round(RadialView.GlassDiameter * size / RadialView.ViewSize * dpi.DpiScaleX));
-            if (!IsVisible)
-                View.SetGlassBackdrop(GlassBackdrop.Capture(_glassSample.X, _glassSample.Y, _glassSample.Span));
+            // Sample before showing so the backdrop never captures the wheel itself.
+            int span = (int)Math.Round(RadialView.GlassDiameter * size / RadialView.ViewSize * dpi.DpiScaleX);
+            View.SetGlassBackdrop(GlassBackdrop.Capture((int)p.X, (int)p.Y, span));
         }
 
         if (!IsVisible) Show();
@@ -219,27 +226,6 @@ public partial class MainWindow : Window
         Focus();
         View.Open();
         View.CaptureMouse();
-        if (glass && RenderCapability.Tier >= 0x10000 && OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041))
-        {
-            // Windows excludes only this overlay. If unsupported, the opening image stays as a fallback.
-            _captureExcluded = SetWindowDisplayAffinity(new WindowInteropHelper(this).Handle, 0x11);
-            if (_captureExcluded) _glassRefresh.Start();
-        }
-    }
-
-    private async void RefreshGlass(object? sender, EventArgs e)
-    {
-        if (_glassBusy || !View.IsFullyOpen) return;
-        var (x, y, span) = _glassSample;
-        int generation = _glassGeneration;
-        _glassBusy = true;
-        try
-        {
-            var image = await Task.Run(() => GlassBackdrop.Capture(x, y, span));
-            if (generation == _glassGeneration && image != null && View.IsOpen)
-                View.SetGlassBackdrop(image);
-        }
-        finally { _glassBusy = false; }
     }
 
     private void CloseMenu(Action? after = null)
@@ -259,19 +245,12 @@ public partial class MainWindow : Window
         }
 
         _afterClose = after;
-        _glassRefresh.Stop();
-        _glassGeneration++;
         View.BeginClose();
     }
 
     private void OnCloseFinished()
     {
         Hide();
-        if (_captureExcluded)
-        {
-            SetWindowDisplayAffinity(new WindowInteropHelper(this).Handle, 0);
-            _captureExcluded = false;
-        }
         View.SetGlassBackdrop(null);
         var after = _afterClose;
         _afterClose = null;
@@ -303,6 +282,12 @@ public partial class MainWindow : Window
         _settings.Activate();
     }
 
+    internal void OpenWidgetSettings(StatusArc? metric)
+    {
+        OpenSettings();
+        _settings?.ShowWidgetSettings(metric);
+    }
+
     private async void OpenUpdates()
     {
         OpenSettings();
@@ -329,6 +314,12 @@ public partial class MainWindow : Window
         ConfigStore.Commit();
     }
 
+    private void OnTimerFinished()
+    {
+        _tray?.NotifyTimerElapsed();
+        System.Media.SystemSounds.Exclamation.Play();
+    }
+
     // ---------------------------------------------------------------------
     //  Клавиши: Esc, Tab, стрелки, цифры 1-9 (режимы)
     // ---------------------------------------------------------------------
@@ -345,6 +336,11 @@ public partial class MainWindow : Window
         else if (e.Key == Key.F2)
         {
             CloseMenu(OpenSettings);
+        }
+        else if (e.Key == Key.T && View.ToggleStatusTimer())
+        {
+            e.Handled = true;
+            return;
         }
         else if (e.Key == Key.Right)
         {
@@ -372,8 +368,9 @@ public partial class MainWindow : Window
         _mouseHotkey.Dispose();
         _keyRelease.Stop();
         _tray?.Dispose();
-        _glassRefresh.Stop();
-        _glassGeneration++;
+        StatusWidgets.CloseAll();
+        StatusRingMonitor.Instance.TimerFinished -= OnTimerFinished;
+        _chameleon?.Dispose();
         base.OnClosed(e);
     }
 }

@@ -3,7 +3,7 @@ using System.Windows.Media;
 
 namespace RadialMenu1;
 
-public enum MenuTheme { Violet, Dark, Light, Ocean, Forest, Custom, Glass }
+public enum MenuTheme { Violet, Dark, Light, Ocean, Forest, Custom, Glass, Chameleon }
 
 internal sealed record MenuPalette(Color Disc, Color Center, Color Accent, Color Text)
 {
@@ -18,6 +18,7 @@ internal sealed record MenuPalette(Color Disc, Color Center, Color Accent, Color
         MenuTheme.Ocean => "Океан",
         MenuTheme.Forest => "Лес",
         MenuTheme.Glass => "Жидкое стекло",
+        MenuTheme.Chameleon => "Хамелеон",
         _ => "Свой цвет"
     };
 
@@ -46,11 +47,44 @@ internal sealed record MenuPalette(Color Disc, Color Center, Color Accent, Color
     public Color AccentButtonText => Contrast(Accent, Colors.Black) >= Contrast(Accent, Colors.White)
         ? Colors.Black : Colors.White;
 
+    internal Brush WheelSurface(double opacity, bool center = false, bool glass = false)
+    {
+        Color surface = center ? Center : Disc;
+        Color top = Blend(Blend(surface, Text, center ? .08 : .12), Accent, .075);
+        Color bottom = Blend(surface, Center, center ? .10 : .26);
+        if (glass)
+        {
+            top.A = center ? (byte)224 : (byte)106;
+            bottom.A = center ? (byte)243 : (byte)193;
+        }
+        var brush = new LinearGradientBrush(top, bottom, 83) { Opacity = opacity };
+        brush.Freeze();
+        return brush;
+    }
+
+    internal Brush WheelEdge(bool center = false)
+    {
+        var brush = new LinearGradientBrush(
+            Blend(Text, Accent, .24) with { A = center ? (byte)118 : (byte)99 },
+            Accent with { A = center ? (byte)76 : (byte)47 }, 84);
+        brush.Freeze();
+        return brush;
+    }
+
+    internal Brush WheelHover(double opacity)
+    {
+        var brush = new LinearGradientBrush(
+            Accent with { A = 136 }, Accent with { A = 31 }, 98) { Opacity = opacity };
+        brush.Freeze();
+        return brush;
+    }
+
     public static MenuPalette From(AppConfig config) => ForTheme(config, config.Theme);
 
     public static MenuPalette ForTheme(AppConfig config, MenuTheme theme)
     {
         var palette = DefaultForTheme(config, theme);
+        if (theme == MenuTheme.Chameleon) return palette;
         var colors = config.ThemeOverrides?.GetValueOrDefault(theme);
         if (TryParseColor(colors?.Accent, out var accent))
             palette = palette with { Accent = accent, HasCustomColors = true };
@@ -78,6 +112,9 @@ internal sealed record MenuPalette(Color Disc, Color Center, Color Accent, Color
         MenuTheme.Ocean => Create(0x112D3D, 0x091D28, 0x42C8F5),
         MenuTheme.Forest => Create(0x192E25, 0x0E2018, 0x6CDD98),
         MenuTheme.Glass => Create(0x172D43, 0x0A192B, 0xA1E2FF),
+        MenuTheme.Chameleon => new(ChameleonMonitor.Current.Background,
+            Blend(ChameleonMonitor.Current.Background, Colors.Black, 0.22),
+            ChameleonMonitor.Current.Accent, Rgb(0xF2F2F7)) { HasCustomColors = true },
         MenuTheme.Custom when TryParseColor(config.CustomColor, out var accent) =>
             new(Blend(Rgb(0x18191F), accent, 0.15), Rgb(0x101116), accent, Rgb(0xF2F2F7)),
         _ => Create(0x1B1724, 0x09070D, 0xA855F7)
@@ -116,7 +153,7 @@ internal sealed record MenuPalette(Color Disc, Color Center, Color Accent, Color
         return fallback;
     }
 
-    private static double Contrast(Color a, Color b)
+    internal static double Contrast(Color a, Color b)
     {
         static double Linear(byte value)
         {
@@ -132,7 +169,7 @@ internal sealed record MenuPalette(Color Disc, Color Center, Color Accent, Color
         return Math.Max(first, second) / Math.Min(first, second);
     }
 
-    private static Color Blend(Color start, Color end, double amount) => Color.FromRgb(
+    internal static Color Blend(Color start, Color end, double amount) => Color.FromRgb(
         (byte)(start.R + (end.R - start.R) * amount),
         (byte)(start.G + (end.G - start.G) * amount),
         (byte)(start.B + (end.B - start.B) * amount));
