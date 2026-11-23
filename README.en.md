@@ -1,31 +1,34 @@
-<div align="center">
-  <img src="docs/media/radialmenu-hero-violet.png" width="900" alt="RadialMenu: the violet wheel with Windows app icons and a Settings button in the center">
-  <h1>RadialMenu</h1>
-  <p><strong>Your favorite apps, one mouse gesture away</strong></p>
-  <p>Open the wheel right where your cursor is and pick a slice. Set up separate wheels for work, games, and everyday shortcuts, with each app in a direction you can remember.</p>
-  <p><a href="README.md">Русский</a> · <strong>English</strong></p>
-  <a href="https://github.com/applimenu/RadialMenu/releases/latest"><img src="docs/media/download-en.png" width="218" alt="Download RadialMenu for Windows x64"></a>
-</div>
+# RadialMenu
 
-## See RadialMenu in action
+**A radial launcher for Windows.** Press **Ctrl + Alt + Q** to open the wheel at your pointer. Select a shortcut to open an app, folder or website. The outer ring shows live system metrics.
 
-- **A wheel at your cursor.** Pick an app by direction. If it already has an open window, RadialMenu brings it to the foreground.
-- **Layouts for different tasks.** Search installed apps by name, add folders and websites, and group shortcuts in submenus. Drag icons around the preview to rearrange them.
-- **Selection in one move.** Hold your shortcut key or a side mouse button, point at a slice, and release. You can pause the wheel in games you choose.
-- **Make it yours.** Adjust the background and accent of each theme, wheel size, and transparency. See changes immediately in the full-size preview.
+**[Download for Windows x64](https://github.com/applimenu/RadialMenu/releases/latest/download/RadialMenu-Setup-win-x64.exe)** · [1.8.0 release notes](https://github.com/applimenu/RadialMenu/releases/tag/v1.8.0) · [Русский](README.md)
 
-<div align="center">
-  <img src="docs/media/radialmenu-settings-violet.png" width="820" alt="RadialMenu Settings with the color wheel and full-size preview. The app interface is shown in Russian.">
-</div>
+![Appearance settings and a live preview of the wheel](docs/media/radial-settings-appearance.png)
 
-## Install
+## Build your wheel
 
-> If you already have version 1.2.2 or earlier, download and run the new installer once. Your settings will be preserved. Future updates are available in **Settings → Application**.
+Arrange work apps, project folders and websites by direction. Create a separate wheel for games. Drag a shortcut in the live preview to put it where you expect to find it.
 
-1. Open the [latest release](https://github.com/applimenu/RadialMenu/releases/latest) and download `RadialMenu-Setup-win-x64.exe` under **Assets**.
-2. Run the installer, then open RadialMenu from the Start menu. The installer includes the .NET runtime.
-3. Press **Ctrl + Alt + Q** to open the wheel. Select **Settings («Настройки»)** in the center.
+Choose **Classic**, **Circles**, **Honeycomb** or **Ring**. Adjust the size, transparency and glow, or use the **Chameleon** theme for automatic colors.
 
-## Build from source
+<p align="center"><img src="docs/media/radial-wheel-styles.png" width="660" alt="The same shortcuts in all four layouts using the Ocean theme"></p>
 
-Open `RadialMenu1.slnx` in Visual Studio with .NET 11 and WPF support. See the [release guide](installer/RELEASE.md) for installer build steps (in Russian).
+## From a status arc to a desktop widget
+
+- **Check system load.** Choose which arcs to show around the wheel, including CPU, GPU, memory, network and battery.
+- **Keep a metric on screen.** Click its arc to pin a widget. Drag it to a free grid slot. Right-click to resize it or switch to a compact desktop card.
+- **Keep playing.** Enable compact widgets under **Controls → Games**. While a game is active, the cards show their readings and let clicks pass through to the game.
+- **Record the screen.** Start a silent MP4 recording from the tray menu or the **System** settings. Open the recordings folder from either place.
+
+## First launch
+
+1. Download and run the Windows x64 installer. It includes the .NET runtime.
+2. Open RadialMenu from Start and press **Ctrl + Alt + Q**.
+3. Select the settings shortcut at the top of the wheel to add your apps. Under **Controls**, you can assign a side mouse button and enable selection on release.
+
+If you use version 1.2.2 or earlier, upgrade once using the installer. Your settings carry over.
+
+## Build
+
+Open `RadialMenu1.slnx` in Visual Studio with .NET 11 and WPF support, or run `dotnet build RadialMenu1.slnx -c Release` on Windows. [Installer build guide](installer/RELEASE.md)
